@@ -15,6 +15,27 @@ description: "Compare current project state with memory files and update them. D
 
 ## Refresh Process
 
+### Step 0.5: Tool Usage Rules (MANDATORY)
+
+Use OpenCode tools explicitly while refreshing memory:
+
+1. **`glob`** to find manifests, route files, models, migrations, configs, and tests
+2. **`read`** to inspect current memory files and changed source files
+3. **`grep`** to detect new routes, dependencies, schema objects, env vars, and architectural markers
+4. **`ast_grep_search`** to confirm structural code changes when text matching is ambiguous
+5. **`lsp_symbols` / `lsp_find_references`** to verify renamed or relocated symbols in supported languages
+6. **`task` with `subagent_type="explore"`** for parallel scanning when the project is large
+
+### Step 0.6: Principles to Track
+
+When updating memory, record not just file changes but also principle-level changes:
+
+- New or removed normalization/denormalization decisions, foreign keys, indexes, and transaction boundaries
+- New or changed layering rules, dependency boundaries, service/repository splits, or module responsibilities
+- New API conventions for validation, pagination, versioning, auth/authz, rate limiting, and error shape
+- New system behaviors such as caching, queue processing, observability, scaling assumptions, or event-driven flows
+- New security controls such as RBAC, audit logging, encryption, or least-privilege boundaries
+
 ### Step 1: Load Current Memory
 
 Read all files in `.opencode/everything-backend-memory/`:

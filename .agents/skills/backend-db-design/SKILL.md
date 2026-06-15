@@ -54,8 +54,24 @@ Default to relational discipline unless the access pattern clearly requires othe
    - Avoid indexing every column blindly
 
 5. **Denormalization is an exception**
-   - Only denormalize for measured read/performance needs
-   - Document the consistency mechanism (trigger, job, application update, materialized view)
+    - Only denormalize for measured read/performance needs
+    - Document the consistency mechanism (trigger, job, application update, materialized view)
+
+6. **Security and ERP/admin defaults**
+   - Model users, roles, permissions, and audit trails explicitly when privileged workflows exist
+   - Prefer immutable audit/event tables for critical state changes
+   - Store sensitive data minimally and define encryption/hash strategy for secrets and credentials
+
+### Step 1.6: Tool-Assisted Schema Analysis (MANDATORY)
+
+Use OpenCode tools directly while designing or reviewing schema work:
+
+1. **`glob`** to find schema files, migrations, ERDs, ORM models, and seed scripts
+2. **`read`** to inspect existing models, migration history, and memory files
+3. **`grep`** to find tables, relation names, indexes, foreign keys, and transaction-sensitive workflows
+4. **`ast_grep_search`** for ORM/model structures when raw text search is noisy
+5. **`lsp_symbols` / `lsp_find_references`** to trace model usage and query call sites in supported languages
+6. **`task` with `subagent_type="explore"`** for parallel repository/schema discovery and **`subagent_type="librarian"`** for database-engine-specific guidance
 
 ### Step 2: Database Selection
 

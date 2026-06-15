@@ -15,6 +15,27 @@ description: "Explore and understand existing backend projects. Reads project st
 
 ## Discovery Process
 
+### Step 0.5: Tool Usage Rules (MANDATORY)
+
+Use OpenCode tools directly during discovery:
+
+1. **`glob`** for file discovery and structure mapping
+2. **`read`** for manifests, configs, README files, and representative source files
+3. **`grep`** for framework imports, route declarations, auth patterns, ORM usage, and queue/cache integrations
+4. **`ast_grep_search`** for structural searches such as controllers, handlers, services, and repositories
+5. **`lsp_symbols`, `lsp_find_references`, and `lsp_goto_definition`** when supported to trace definitions and boundaries
+6. **`task` with `subagent_type="explore"`** for parallel repository search and **`subagent_type="librarian"`** when an external dependency or framework must be understood
+
+### Step 0.6: What to Identify
+
+Discovery should explicitly surface whether the codebase follows these principles or where it deviates:
+
+- **Database**: normalization level, referential integrity, ACID-sensitive flows, index strategy, consistency/denormalization choices
+- **Code/Architecture**: SOLID, DRY, KISS, YAGNI, separation of concerns, dependency injection patterns, loose coupling, cohesion
+- **API**: REST conventions, idempotency, versioning, validation, error handling, auth/authz, pagination, rate limiting
+- **System**: scalability, reliability, availability, caching, queues, observability, event-driven patterns, CQRS usage
+- **Security**: least privilege, defense in depth, input sanitization, secure defaults, audit logging, encryption practices
+
 ### Step 1: Project Structure Scan
 
 Use glob to identify the project type:

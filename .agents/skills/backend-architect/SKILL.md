@@ -52,10 +52,34 @@ Before recommending any stack or pattern, apply these backend rules:
    - Every module should have one clear reason to change
 
 4. **Operational concerns are part of architecture**
-   - Define transaction boundaries
-   - Define error taxonomy and observability strategy
-   - Define authorization boundaries and audit requirements
-   - Define scaling assumptions and failure modes
+    - Define transaction boundaries
+    - Define error taxonomy and observability strategy
+    - Define authorization boundaries and audit requirements
+    - Define scaling assumptions and failure modes
+
+5. **Default platform principles**
+   - Prefer DRY, but not at the cost of clarity or coupling unrelated workflows
+   - Prefer KISS before introducing orchestration, abstraction layers, or distributed topology
+   - Apply YAGNI to avoid speculative services, events, read models, or plug-in systems
+   - Favor loose coupling and high cohesion across module boundaries
+   - Use dependency injection/composition where it improves testability or replacement of infrastructure
+
+6. **Security and ERP/admin defaults**
+   - Design for role-based access control and least privilege from the start
+   - Require audit logging for privileged actions, money movement, state transitions, and destructive operations
+   - Assume observability is mandatory: structured logs, metrics, traces, and operational dashboards
+   - Treat scalability as planned evolution, not premature microservice extraction
+
+### Step 1.6: Tool-Assisted Analysis (MANDATORY)
+
+Use OpenCode tools directly while designing:
+
+1. **`glob`** to map project folders, manifests, and architecture-relevant files
+2. **`read`** to inspect existing configs, design docs, and memory files
+3. **`grep`** to find frameworks, queues, auth patterns, cache usage, and module boundaries
+4. **`ast_grep_search`** for structural patterns like controllers calling repositories directly or services importing framework code
+5. **`lsp_symbols` / `lsp_find_references` / `lsp_goto_definition`** when tracing architectural boundaries in typed codebases
+6. **`task` with `subagent_type="explore"`** for parallel internal discovery and **`subagent_type="librarian"`** for framework/library research
 
 ### Step 2: Architecture Pattern Selection
 

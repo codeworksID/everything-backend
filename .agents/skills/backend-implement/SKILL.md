@@ -61,9 +61,26 @@ Apply these rules before generating code:
    - Map them centrally to HTTP/gRPC responses
 
 7. **Tests are part of generation**
-   - Generate unit tests for business rules
-   - Generate integration tests for repositories and DB-backed flows
-   - Generate endpoint/contract tests for transport behavior
+    - Generate unit tests for business rules
+    - Generate integration tests for repositories and DB-backed flows
+    - Generate endpoint/contract tests for transport behavior
+
+8. **Operational and security defaults**
+   - Implement role-based access control, least privilege, and audit logging where privileged workflows exist
+   - Sanitize and validate inputs before business processing and use safe defaults for secrets/config
+   - Prefer observability hooks early: structured logging, metrics, health checks, and correlation IDs when the stack supports them
+
+### Step 1.6: Tool Usage Rules (MANDATORY)
+
+Use OpenCode tools during implementation, not just prose reasoning:
+
+1. **`glob`** to discover adjacent modules, tests, configs, and generated files
+2. **`read`** to inspect existing implementations before generating new ones
+3. **`grep`** to find patterns, validators, error classes, routes, and test helpers
+4. **`ast_grep_search`** to match structural patterns such as service interfaces, repository implementations, and handler signatures
+5. **`lsp_goto_definition`, `lsp_find_references`, and `lsp_symbols`** to reuse existing abstractions correctly
+6. **`lsp_diagnostics`** after edits to catch errors early
+7. **`task` with `subagent_type="explore"`** for multi-area codebase search and **`subagent_type="librarian"`** for external library usage research
 
 ### Step 2: Project Structure Creation
 

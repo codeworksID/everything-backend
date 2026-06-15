@@ -15,6 +15,30 @@ description: "Master orchestrator that auto-routes user requests to the appropri
 
 ## Orchestration Process
 
+### Global Backend Principles
+
+Every routed backend skill should preserve these default engineering priorities unless the user explicitly asks for a different tradeoff:
+
+- **Database**: 1NF, 2NF, 3NF, BCNF when justified, referential integrity, ACID for critical writes, measured denormalization only, explicit index strategy, data consistency
+- **Code/Architecture**: SOLID, DRY, KISS, YAGNI, separation of concerns, dependency injection where helpful, loose coupling, high cohesion, encapsulation
+- **API**: RESTful resource design, idempotency where relevant, versioning, pagination, validation, consistent error handling, rate limiting, authentication and authorization
+- **System**: scalability, reliability, availability, fault tolerance, observability, caching, queue-based processing, event-driven patterns when justified, CQRS only when complexity pays for itself, explicit CAP tradeoffs for distributed systems
+- **Security**: least privilege, defense in depth, input sanitization, secure-by-default behavior, audit logging, encryption in transit and at rest
+
+For backend/admin/ERP work, prioritize: **3NF, ACID, SOLID, DRY, KISS, separation of concerns, RESTful API design, role-based access control, audit logging, validation, observability, and scalability.**
+
+### Tool Usage Rules (MANDATORY)
+
+When routing or preparing work, prefer concrete OpenCode tools over vague inspection:
+
+1. **Use `glob`** to discover files and project structure.
+2. **Use `read`** to inspect manifests, configs, memory files, and skill docs.
+3. **Use `grep`** for text/regex searches such as route names, framework imports, auth middleware, and config keys.
+4. **Use `ast_grep_search`** for structural code searches when language-aware matching matters.
+5. **Use `lsp_symbols`, `lsp_find_references`, and `lsp_goto_definition`** when tracing code relationships in supported languages.
+6. **Use `task` with `subagent_type="explore"` or `subagent_type="librarian"`** for parallel codebase or external research.
+7. **Use `lsp_diagnostics` after edits** when the routed work changes code files.
+
 ### Step 1: Intent Detection
 
 Analyze the user's message to detect intent:
@@ -81,9 +105,9 @@ If user wants multiple things:
 
 #### Complex Request
 If request is vague or complex:
-1. Ask user for clarification
+1. Explore the repository and current context first using tools
 2. Break down into smaller tasks
-3. Confirm understanding before proceeding
+3. Route to the best matching backend skill or sequence of skills
 
 ### Step 4: Skill Execution
 
@@ -99,29 +123,13 @@ skill(name="backend-doctor", user_message="Check my backend")
 skill(name="backend-refresh-memory", user_message="Update memory")
 ```
 
-### Step 5: User Confirmation
+### Step 5: Route and Proceed
 
-Before loading any skill, present your routing decision:
+After identifying the best matching skill:
 
-```markdown
-# Skill Selection
-
-Based on your request: "[user message]"
-
-I recommend loading: **backend-[skill-name]**
-
-**Purpose**: [What this skill does]
-**Why**: [Why this skill matches your request]
-
-Shall I proceed?
-```
-
-Ask:
-- "Is this the right skill for your needs?"
-- "Should I proceed with this approach?"
-- "Would you like a different skill instead?"
-
-**ALWAYS** get user confirmation before loading a skill.
+1. Briefly explain the routing decision
+2. Load the skill immediately
+3. Continue with tool-assisted discovery or implementation without waiting for extra confirmation unless the request is truly ambiguous
 
 ## Decision Trees
 

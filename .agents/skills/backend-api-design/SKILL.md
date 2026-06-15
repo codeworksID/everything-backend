@@ -15,6 +15,17 @@ description: "Design API endpoints including resource structure, request/respons
 
 ## Design Process
 
+### Step 0.5: Tool-Assisted Discovery (MANDATORY)
+
+Before proposing endpoints, inspect the real codebase and context with OpenCode tools:
+
+1. **`glob`** to find route files, controllers, API modules, schemas, and OpenAPI specs
+2. **`read`** to inspect existing route conventions, middleware, validators, and memory files
+3. **`grep`** to locate existing endpoints, auth middleware, pagination helpers, error mappers, and version prefixes
+4. **`ast_grep_search`** for structural route patterns when text search is noisy
+5. **`lsp_symbols` / `lsp_find_references`** to trace handlers, DTOs, and shared response types in supported languages
+6. **`task` with `subagent_type="explore"`** for parallel codebase search and **`subagent_type="librarian"`** when external protocol or framework guidance is needed
+
 ### Step 1: Requirements Gathering
 
 Ask the user iteratively:
@@ -27,6 +38,34 @@ Ask the user iteratively:
 
 Always confirm:
 - "Let me confirm the resources: [list]. Did I miss any?"
+
+### Step 1.5: API Principles (MANDATORY)
+
+Apply these rules before defining endpoints:
+
+1. **RESTful by default**
+   - Prefer resource-oriented URLs and standard HTTP methods
+   - Keep nouns in paths and move business verbs to sub-resources only when necessary
+
+2. **Idempotency and retry safety**
+   - GET, PUT, and DELETE should be naturally idempotent
+   - For critical POST flows (payments, job submission, imports), define idempotency keys when retries are expected
+
+3. **Validation at the boundary**
+   - Validate path params, query params, headers, and body payloads before business logic runs
+   - Reject malformed requests with a consistent error shape
+
+4. **Authorization is part of the contract**
+   - Define who can call each endpoint
+   - Prefer role-based access control for admin/ERP flows and resource ownership checks where needed
+
+5. **Consistency and operability**
+   - Standardize error responses, pagination, filtering, sorting, and versioning
+   - Add rate limiting and audit-sensitive endpoint notes where abuse or privileged actions matter
+
+6. **Secure-by-default responses**
+   - Never expose secrets, internal stack traces, or fields clients do not need
+   - Require encryption in transit and document sensitive fields that need masking/redaction in logs
 
 ### Step 2: API Protocol Selection
 
@@ -227,6 +266,8 @@ Ask:
 - POST /auth/refresh - Refresh token
 - POST /auth/logout - Invalidate token
 - GET /auth/me - Current user
+- Define RBAC/permission requirements per endpoint family
+- Define audit logging for admin actions and sensitive state changes
 
 ### If pagination needed:
 - Use cursor-based for large datasets (>10K items)

@@ -15,6 +15,18 @@ description: "Run health checks on backend code covering code quality, security 
 
 ## Health Check Process
 
+### Step 0.5: Investigation Tools (MANDATORY)
+
+Use concrete OpenCode tools to gather evidence:
+
+1. **`glob`** to inventory source trees, tests, config files, and schemas
+2. **`read`** to inspect key configs, manifests, middleware, and critical source files
+3. **`grep`** to search for insecure patterns, missing validation, raw queries, secret usage, and error-handling inconsistencies
+4. **`ast_grep_search`** for structural anti-patterns such as fat controllers, repository misuse, or unsafe framework hooks
+5. **`lsp_symbols`, `lsp_find_references`, and `lsp_goto_definition`** to trace call graphs and verify where business rules live
+6. **`lsp_diagnostics`** to surface compile/type problems alongside code-quality findings
+7. **`task` with `subagent_type="explore"`** for parallel internal scanning and **`subagent_type="librarian"`** for framework/security best-practice checks
+
 ### Step 1: Project Scan
 
 Use `explore` agents to:
@@ -66,6 +78,7 @@ Review code against these enforceable backend rules:
 - [ ] Resource ownership verification
 - [ ] API endpoint protection
 - [ ] Middleware validation
+- [ ] Least-privilege defaults for admin and service accounts
 
 #### Data Protection
 - [ ] SQL injection prevention (parameterized queries)
@@ -75,6 +88,7 @@ Review code against these enforceable backend rules:
 - [ ] Data encryption in transit (HTTPS)
 - [ ] Input sanitization
 - [ ] File upload validation
+- [ ] Sensitive fields redacted from logs and error payloads
 
 #### Dependencies
 - [ ] No known vulnerabilities (run npm audit / pip audit)
@@ -102,6 +116,7 @@ Review code against these enforceable backend rules:
 - [ ] No missing indexes on foreign keys and high-value filters
 - [ ] Schema appears normalized by default (3NF) unless denormalization is justified
 - [ ] Derived or duplicated fields have explicit consistency mechanisms
+- [ ] Referential integrity is enforced where the storage engine supports it
 
 #### API Performance
 - [ ] Response time acceptable
@@ -124,6 +139,11 @@ Review code against these enforceable backend rules:
 - [ ] No single points of failure
 - [ ] Load balancer ready
 - [ ] Database connection limits
+
+#### Observability and Auditability
+- [ ] Structured logs with correlation/request IDs where appropriate
+- [ ] Metrics or health checks exist for critical services
+- [ ] Audit logging covers privileged and state-changing actions
 
 ### Step 5: Report Generation
 
