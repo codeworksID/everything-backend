@@ -1,17 +1,23 @@
 # everything-backend
 
-Reusable Opencode backend skills for project discovery, architecture, database design, API design, implementation, health checks, and memory refresh.
+Reusable Opencode backend skills covering project discovery, architecture, database design, API design, implementation, testing, auth, operations, deployment, migrations, health checks, and memory refresh.
 
 ## Included skills
 
-- `backend-orchestrator`
-- `backend-discovery`
-- `backend-architect`
-- `backend-db-design`
-- `backend-api-design`
-- `backend-implement`
-- `backend-doctor`
-- `backend-refresh-memory`
+- `backend-orchestrator` — route requests to the right backend skill
+- `backend-scan` — explore an existing project and keep memory files in sync
+- `backend-architect` — plan backend architecture and tech stack
+- `backend-db-design` — design database schemas and migrations
+- `backend-api-design` — design API endpoints and contracts
+- `backend-implement` — generate or modify backend code
+- `backend-test` — design tests, fixtures, mocks, and coverage
+- `backend-auth` — design and implement authentication and authorization
+- `backend-ops` — logging, metrics, tracing, caching, async messaging, and config
+- `backend-deploy` — containers, docker-compose, CI/CD, and health probes
+- `backend-migrate` — evolve schemas, backfills, and zero-downtime migrations
+- `backend-doctor` — run execution-based health checks and reviews
+
+Shared reference files live in `.agents/skills/_shared/` and are included in the install.
 
 ## Installation
 
@@ -73,9 +79,11 @@ The installer copies every folder from `.agents/skills/` into your global Openco
 After installation, the skills are available by name. Examples:
 
 - `backend-orchestrator` — route backend requests to the right sub-skill
-- `backend-discovery` — inspect an existing backend codebase
+- `backend-scan` — inspect an existing backend codebase and keep memory current
 - `backend-api-design` — design endpoints and schemas
 - `backend-implement` — turn designs into code
+- `backend-test` — add or expand tests
+- `backend-auth` — add authentication and authorization
 - `backend-doctor` — run a backend health check
 
 ## Development

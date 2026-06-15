@@ -15,6 +15,17 @@ description: "Design database schemas including table structures, relationships,
 
 ## Design Process
 
+### Step 0: Context Loading
+
+Before gathering requirements, read project memory for existing context:
+
+- `project-overview.md` — project type and module boundaries
+- `tech-stack.md` — languages, frameworks, databases, ORM
+- `db-schema.md` — current database schema
+- `decisions.md` — prior schema or architecture decisions
+
+If memory is stale or empty, suggest running `backend-scan` first.
+
 ### Step 1: Requirements Gathering
 
 Ask the user iteratively:
@@ -30,48 +41,13 @@ Always confirm:
 
 ### Step 1.5: Data Modeling Rules (MANDATORY)
 
-Default to relational discipline unless the access pattern clearly requires otherwise.
-
-1. **Normalize by default**
-   - Start at 3NF for transactional systems
-   - Eliminate repeating groups (1NF)
-   - Eliminate partial dependencies on composite keys (2NF)
-   - Eliminate transitive dependencies and duplicated facts (3NF)
-   - Consider BCNF only when functional dependencies justify it
-
-2. **Model facts once**
-   - Each fact should have one canonical storage location
-   - Use junction tables for M:N relationships
-   - Avoid comma-separated lists, duplicated labels, and denormalized snapshots unless explicitly justified
-
-3. **Prefer constraints over convention**
-   - Encode integrity with PRIMARY KEY, FOREIGN KEY, UNIQUE, CHECK, NOT NULL
-   - Application validation complements the database; it does not replace it
-
-4. **Indexes follow query patterns**
-   - Define indexes from actual read patterns
-   - Justify composite index order
-   - Avoid indexing every column blindly
-
-5. **Denormalization is an exception**
-    - Only denormalize for measured read/performance needs
-    - Document the consistency mechanism (trigger, job, application update, materialized view)
-
-6. **Security and ERP/admin defaults**
-   - Model users, roles, permissions, and audit trails explicitly when privileged workflows exist
-   - Prefer immutable audit/event tables for critical state changes
-   - Store sensitive data minimally and define encryption/hash strategy for secrets and credentials
+Default to relational discipline unless the access pattern clearly requires otherwise. Apply the database principles in `_shared/principles.md` before finalizing a schema.
 
 ### Step 1.6: Tool-Assisted Schema Analysis (MANDATORY)
 
-Use OpenCode tools directly while designing or reviewing schema work:
+Use OpenCode tools directly while designing or reviewing schema work.
 
-1. **`glob`** to find schema files, migrations, ERDs, ORM models, and seed scripts
-2. **`read`** to inspect existing models, migration history, and memory files
-3. **`grep`** to find tables, relation names, indexes, foreign keys, and transaction-sensitive workflows
-4. **`ast_grep_search`** for ORM/model structures when raw text search is noisy
-5. **`lsp_symbols` / `lsp_find_references`** to trace model usage and query call sites in supported languages
-6. **`task` with `subagent_type="explore"`** for parallel repository/schema discovery and **`subagent_type="librarian"`** for database-engine-specific guidance
+See `_shared/tool-rules.md` for the canonical tool-usage rules.
 
 ### Step 2: Database Selection
 

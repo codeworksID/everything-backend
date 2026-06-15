@@ -15,6 +15,18 @@ description: "Design backend architecture including system structure, tech stack
 
 ## Architecture Process
 
+### Step 0: Context Loading
+
+Before gathering requirements, read project memory for existing context:
+
+- `project-overview.md` — project type, structure, and module boundaries
+- `tech-stack.md` — languages, frameworks, databases
+- `api-patterns.md` — existing API conventions
+- `db-schema.md` — current database schema
+- `decisions.md` — prior architecture decisions
+
+If memory is stale or empty, suggest running `backend-scan` first.
+
 ### Step 1: Requirements Gathering
 
 Ask the user iteratively:
@@ -31,55 +43,13 @@ Always confirm understanding:
 
 ### Step 1.5: Architecture Principles (MANDATORY)
 
-Before recommending any stack or pattern, apply these backend rules:
-
-1. **SOLID over convenience**
-   - Single Responsibility: controllers handle transport, services handle use cases, repositories handle persistence
-   - Open/Closed: extend behavior through composition and new modules, not giant conditionals
-   - Liskov Substitution: abstractions must be safely replaceable in tests and production
-   - Interface Segregation: keep contracts small and use-case-specific
-   - Dependency Inversion: business logic depends on interfaces/ports, not concrete frameworks or ORMs
-
-2. **Layering and dependency direction**
-   - Transport layer may depend on application layer
-   - Application layer may depend on domain and ports
-   - Infrastructure implements ports and depends inward
-   - Domain layer must not import HTTP, ORM, queue, or framework details
-
-3. **Boundaries before tooling**
-   - Define modules, use cases, aggregates, and ownership before choosing libraries
-   - Prefer modular monolith boundaries before jumping to microservices
-   - Every module should have one clear reason to change
-
-4. **Operational concerns are part of architecture**
-    - Define transaction boundaries
-    - Define error taxonomy and observability strategy
-    - Define authorization boundaries and audit requirements
-    - Define scaling assumptions and failure modes
-
-5. **Default platform principles**
-   - Prefer DRY, but not at the cost of clarity or coupling unrelated workflows
-   - Prefer KISS before introducing orchestration, abstraction layers, or distributed topology
-   - Apply YAGNI to avoid speculative services, events, read models, or plug-in systems
-   - Favor loose coupling and high cohesion across module boundaries
-   - Use dependency injection/composition where it improves testability or replacement of infrastructure
-
-6. **Security and ERP/admin defaults**
-   - Design for role-based access control and least privilege from the start
-   - Require audit logging for privileged actions, money movement, state transitions, and destructive operations
-   - Assume observability is mandatory: structured logs, metrics, traces, and operational dashboards
-   - Treat scalability as planned evolution, not premature microservice extraction
+Before recommending any stack or pattern, apply the code/architecture, system, and security principles in `_shared/principles.md`.
 
 ### Step 1.6: Tool-Assisted Analysis (MANDATORY)
 
-Use OpenCode tools directly while designing:
+Use OpenCode tools directly while designing.
 
-1. **`glob`** to map project folders, manifests, and architecture-relevant files
-2. **`read`** to inspect existing configs, design docs, and memory files
-3. **`grep`** to find frameworks, queues, auth patterns, cache usage, and module boundaries
-4. **`ast_grep_search`** for structural patterns like controllers calling repositories directly or services importing framework code
-5. **`lsp_symbols` / `lsp_find_references` / `lsp_goto_definition`** when tracing architectural boundaries in typed codebases
-6. **`task` with `subagent_type="explore"`** for parallel internal discovery and **`subagent_type="librarian"`** for framework/library research
+See `_shared/tool-rules.md` for the canonical tool-usage rules.
 
 ### Step 2: Architecture Pattern Selection
 

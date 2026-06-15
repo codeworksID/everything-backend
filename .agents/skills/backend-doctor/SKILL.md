@@ -1,209 +1,202 @@
 ---
 name: backend-doctor
-description: "Run health checks on backend code covering code quality, security vulnerabilities, and performance issues. Scans the project, identifies issues with severity levels, and provides recommendations. Use this skill when the user says 'check my backend', 'health check', 'review code', 'doctor', or before deployment."
+description: "Run execution-based health checks on backend code: tests, lint/type checks, dependency audits, smoke tests, LSP diagnostics, and static anti-pattern scans. Identifies issues with severity levels and provides evidence-backed recommendations. Use this skill when the user says 'check my backend', 'health check', 'review code', 'doctor', or before deployment."
 ---
 
 # Backend Doctor
 
 ## When to Activate
 
-- User wants to check backend health
-- User says "check my backend", "health check", "review code", "doctor"
-- Before deployment or after major changes
-- User asks "is my code secure?"
-- User asks "are there performance issues?"
+- User wants to check backend health.
+- User says "check my backend", "health check", "review code", "doctor".
+- Before deployment or after major changes.
+- User asks "is my code secure?" or "are there performance issues?".
 
-## Health Check Process
+## Context Loading
 
-### Step 0.5: Investigation Tools (MANDATORY)
+Before running checks, read project memory for existing context:
 
-Use concrete OpenCode tools to gather evidence:
+- `project-overview.md` — project type and structure
+- `tech-stack.md` — languages, frameworks, test commands
+- `api-patterns.md` — API conventions and endpoint hot paths
+- `db-schema.md` — database schema for data-integrity checks
+- `decisions.md` — prior architecture and operational decisions
+- `issues.md` — known issues and TODOs to validate or expand
 
-1. **`glob`** to inventory source trees, tests, config files, and schemas
-2. **`read`** to inspect key configs, manifests, middleware, and critical source files
-3. **`grep`** to search for insecure patterns, missing validation, raw queries, secret usage, and error-handling inconsistencies
-4. **`ast_grep_search`** for structural anti-patterns such as fat controllers, repository misuse, or unsafe framework hooks
-5. **`lsp_symbols`, `lsp_find_references`, and `lsp_goto_definition`** to trace call graphs and verify where business rules live
-6. **`lsp_diagnostics`** to surface compile/type problems alongside code-quality findings
-7. **`task` with `subagent_type="explore"`** for parallel internal scanning and **`subagent_type="librarian"`** for framework/security best-practice checks
+If memory is stale or empty, run `backend-scan` first to build context.
 
-### Step 1: Project Scan
+## Before Running Checks
 
-Use `explore` agents to:
-- Read project structure
-- Identify tech stack
-- Find all source files
-- Check for configuration files
-- Read package manifests
+1. Confirm the project root and working directory.
+2. If the project is unfamiliar, run `backend-scan` first to build context.
+3. Read the manifest files (`package.json`, `pyproject.toml`, `go.mod`, `pom.xml`, `Makefile`) to detect which commands the project actually exposes.
 
-### Step 2: Code Quality Check
+## Detecting the Right Commands
 
-Review code against these enforceable backend rules:
+Use `read` on the relevant manifest, then map standard scripts/goals to concrete commands.
 
-#### Architecture and SOLID
-- [ ] Controllers/handlers are transport-only and thin
-- [ ] Services/use cases own business rules and orchestration
-- [ ] Repositories are persistence-only
-- [ ] Dependencies point inward toward business logic
-- [ ] Large classes/functions have one clear reason to change
-- [ ] Abstractions are small enough to be testable and replaceable
+| Stack | Manifest | Common commands to look for |
+|-------|----------|----------------------------|
+| Node.js | `package.json` scripts | `npm test`, `npm run lint`, `npm run typecheck`, `npm run build`, `npm audit` |
+| Python | `pyproject.toml`, `setup.cfg`, `tox.ini`, `Makefile` | `pytest`, `ruff check .`, `mypy .`, `pip-audit --desc`, `bandit -r .` |
+| Go | `go.mod` | `go test ./...`, `go vet ./...`, `golangci-lint run ./...`, `govulncheck ./...` |
+| Java/Maven | `pom.xml` | `./mvnw test`, `./mvnw verify`, `./mvnw spotbugs:check`, `./mvnw dependency:analyze` |
+| Generic | `Makefile` | `make test`, `make lint`, `make audit`, `make build` |
 
-#### Maintainability Signals
-- [ ] No god services coordinating unrelated business capabilities
-- [ ] No deep branching that should be polymorphism or strategy
-- [ ] No duplicate business rule logic across controllers/services
-- [ ] No framework types leaking into domain logic unless justified
-- [ ] No hidden side effects inside helpers or repositories
+Prefer the exact script names found in the manifest. If a manifest is missing, fall back to the standard commands for the detected language. Never invent non-standard scripts.
 
-#### Validation and Error Discipline
-- [ ] Input validation exists at transport boundaries
-- [ ] Business invariant validation exists in services/domain
-- [ ] DB constraints back critical persistence invariants
-- [ ] Errors are typed or categorized, not only generic 500s
-- [ ] Error mapping is consistent across endpoints
+## Running Checks
 
-### Step 3: Security Check
+All checks must produce observable evidence (exit codes, command output, file paths, line numbers). Static observations are secondary and only support dynamic findings.
 
-#### Authentication
-- [ ] Passwords hashed (bcrypt/argon2, not MD5/SHA1)
-- [ ] JWT tokens have expiration
-- [ ] Refresh token rotation implemented
-- [ ] Session management secure
-- [ ] OAuth implementation correct
-- [ ] No credentials in code/logs
+### 1. Run the Test Suite
 
-#### Authorization
-- [ ] Role-based access control
-- [ ] Permission checks on protected routes
-- [ ] Resource ownership verification
-- [ ] API endpoint protection
-- [ ] Middleware validation
-- [ ] Least-privilege defaults for admin and service accounts
+Use `bash` to execute the detected test command.
 
-#### Data Protection
-- [ ] SQL injection prevention (parameterized queries)
-- [ ] XSS prevention (output encoding)
-- [ ] CSRF protection
-- [ ] Data encryption at rest
-- [ ] Data encryption in transit (HTTPS)
-- [ ] Input sanitization
-- [ ] File upload validation
-- [ ] Sensitive fields redacted from logs and error payloads
+Examples:
+- Node.js: `npm test` or `npm run test:ci`
+- Python: `pytest`
+- Go: `go test ./...`
+- Java/Maven: `./mvnw test`
 
-#### Dependencies
-- [ ] No known vulnerabilities (run npm audit / pip audit)
-- [ ] All packages up to date
-- [ ] No unnecessary dependencies
-- [ ] No deprecated packages
-- [ ] License compliance
+Capture:
+- Exit code.
+- Number of failures/errors.
+- Names of failing test files and the failing assertions.
 
-#### Secrets Management
-- [ ] No secrets in code
-- [ ] Environment variables used
-- [ ] .env files gitignored
-- [ ] Secrets not logged
-- [ ] API keys rotated regularly
+If the test suite fails on a critical path (auth, payments, persistence, invariants), mark it **High** or **Critical**. A completely broken build is **Critical**.
 
-### Step 4: Performance Check
+### 2. Run Lint / Format / Type Checks
 
-#### Database Performance and Data Integrity
-- [ ] No N+1 queries on hot paths
-- [ ] Indexes match actual query and join patterns
-- [ ] Query optimization (no broad SELECT * on hot paths)
-- [ ] Connection pooling configured
-- [ ] Database query timeouts
-- [ ] Appropriate use of transactions
-- [ ] No missing indexes on foreign keys and high-value filters
-- [ ] Schema appears normalized by default (3NF) unless denormalization is justified
-- [ ] Derived or duplicated fields have explicit consistency mechanisms
-- [ ] Referential integrity is enforced where the storage engine supports it
+Use `bash` to run the relevant quality gates.
 
-#### API Performance
-- [ ] Response time acceptable
-- [ ] Payload sizes reasonable
-- [ ] Pagination on list endpoints
-- [ ] Caching where appropriate
-- [ ] Compression enabled
-- [ ] HTTP caching headers
+Examples:
+- Node.js: `npm run lint`, `npm run typecheck`, `tsc --noEmit`
+- Python: `ruff check .`, `black --check .`, `mypy .`
+- Go: `go vet ./...`, `golangci-lint run ./...`
+- Java/Maven: `./mvnw checkstyle:check`, `./mvnw spotbugs:check`
 
-#### Resource Usage
-- [ ] No memory leaks
-- [ ] CPU usage reasonable
-- [ ] Connection limits configured
-- [ ] File handles properly closed
-- [ ] Graceful shutdown handling
+Then run `lsp_diagnostics` on the source directory or key files to catch compile/type errors the CLI tools may have missed.
 
-#### Scalability
-- [ ] Stateless design
-- [ ] Horizontal scaling possible
-- [ ] No single points of failure
-- [ ] Load balancer ready
-- [ ] Database connection limits
+Capture:
+- Tool output and exit codes.
+- `lsp_diagnostics` errors/warnings with file paths.
 
-#### Observability and Auditability
-- [ ] Structured logs with correlation/request IDs where appropriate
-- [ ] Metrics or health checks exist for critical services
-- [ ] Audit logging covers privileged and state-changing actions
+Severity:
+- Type errors that could cause runtime failures: **High**.
+- Linter/format failures on critical paths: **Medium**.
+- Minor style-only linter warnings: **Low**.
 
-### Step 5: Report Generation
+### 3. Run Dependency Audits
 
-Generate a health report with overall score and detailed findings.
+Use `bash` to run the standard audit tool for the stack.
 
-Use evidence, not vibes:
-- Quote file paths and line ranges where possible
-- Explain why the issue violates a backend principle
-- Distinguish structural defects from style preferences
+Examples:
+- Node.js: `npm audit --audit-level moderate` or `pnpm audit`
+- Python: `pip-audit --desc` or `safety check`
+- Go: `govulncheck ./...`
+- Java/Maven: `./mvnw dependency:check` or OWASP Dependency-Check
 
-### Step 5.5: Severity Rules
+Capture:
+- Vulnerability count and severity.
+- Package names and affected versions.
+- Whether a fix version is available.
 
-- **Critical**: data loss risk, auth bypass, injection, broken transaction/invariant handling, secrets exposure
-- **High**: strong maintainability or integrity risk, e.g. god service, missing ownership checks, duplicated business rules in multiple endpoints
-- **Medium**: weak layering, missing tests on critical paths, weak index strategy, inconsistent error mapping
-- **Low**: naming, docs, minor duplication, non-critical observability gaps
+Severity:
+- Known exploitable vulnerability on a production dependency: **Critical**.
+- High/CVSS-high vulnerability: **High**.
+- Moderate or low vulnerabilities: **Medium** / **Low**.
 
-### Step 6: User Confirmation
+### 4. Smoke Test the Running Application
 
-Present health report and ask:
-- "Which issues should I fix first?"
-- "Any issues to ignore?"
-- "Should I implement the fixes?"
+If the project exposes a start command and a health/readiness endpoint, start the app with `bash`, wait for it to listen, then probe the endpoint.
 
-**NEVER** auto-fix without explicit user approval.
+Example flow:
+1. Start server in the background: `npm start`, `python -m <module>`, `go run ./cmd/server`, etc.
+2. Capture the process ID.
+3. Probe the endpoint: `curl -fsS http://localhost:<port>/health` or `curl -fsS http://localhost:<port>/ready`.
+4. Stop the server (kill the recorded PID).
+
+If there is no health endpoint, skip this step and note it under **Recommendations**.
+
+Severity:
+- App fails to start or health check returns non-2xx: **High** or **Critical** depending on environment.
+- Missing health endpoint on a service: **Medium**.
+
+### 5. Scan for Static Anti-Patterns
+
+Use `glob`, `read`, and `grep` to gather targeted evidence after dynamic checks.
+
+Patterns to hunt:
+- **Raw SQL / injection risk**: `grep` for string templates/interpolation inside SQL-like strings (`SELECT`, `INSERT`, `UPDATE`, `DELETE` combined with `${`, `%s`, `+`). Use `read` to confirm.
+- **Secrets in code**: `grep` for `api[_-]?key`, `password`, `secret`, `token` followed by assignments or literals. Verify `.env` is in `.gitignore`.
+- **Fat controllers / handlers**: `lsp_symbols` on controller files; flag files with many route methods or business branching.
+- **Missing validation**: `grep` route handlers that do not reference validation schemas (Zod, Joi, Pydantic, etc.).
+- **N+1 / broad queries**: `grep` for loops containing DB calls or `SELECT *` on hot paths.
+- **Generic error responses**: `grep` for `status(500)`, `raise Exception`, or untyped error returns in API handlers.
+- **Missing ownership checks**: `grep` protected route patterns and verify ownership/RBAC logic with `read`.
+
+Severity:
+- Confirmed injection or secret in committed code: **Critical**.
+- Missing auth/ownership checks on protected routes: **High**.
+- Missing validation on critical endpoints: **High**.
+- N+1 or broad queries: **Medium**.
+- Minor duplication or style issues: **Low**.
+
+## Static Review (Secondary)
+
+Use the following checklist only to classify findings gathered above. Do not present it as a primary deliverable.
+
+See `_shared/principles.md` for the canonical backend principles that underpin this checklist.
+
+## Evidence-Based Report
+
+Every reported finding must be backed by evidence:
+
+1. **File path and line number**: `src/routes/user.ts:42`.
+2. **Tool or command that produced the evidence**: `npm test`, `npm audit`, `lsp_diagnostics`, `grep -n "SELECT \*" src/orders.ts`.
+3. **Relevant output excerpt**: 2–10 lines of output showing the failure, vulnerability, or matched code.
+4. **Severity and category** from the rules below.
+5. **Why it violates a backend principle**.
+6. **Recommendation or minimal fix** with a code example when useful.
+
+If a required tool is missing or fails to run, report the exact error as a **Medium** finding under "Tooling".
+
+## Severity Rules
+
+- **Critical**: data loss risk, authentication bypass, injection (SQL, command, etc.), broken transaction/invariant handling, secrets exposure in code, known exploitable dependency vulnerability.
+- **High**: strong maintainability or integrity risk, e.g. god service, missing ownership/authorization checks, duplicated business rules across endpoints, widespread type errors, failing critical-path tests.
+- **Medium**: weak layering, missing tests on critical paths, weak index strategy, inconsistent error mapping, missing health endpoint, linter/type warnings that could hide real bugs.
+- **Low**: naming, documentation, minor duplication, non-critical observability gaps, cosmetic linter warnings.
 
 ## Decision Trees
 
 ### If security issues found:
-- Prioritize Critical and High severity
-- Provide specific fix instructions
-- Consider immediate patches
-- Recommend full security audit
-- Add security tests
+- Prioritize Critical and High severity.
+- Provide specific fix instructions.
+- Recommend immediate patches.
+- Add or strengthen security tests.
 
 ### If performance issues found:
-- Prioritize database query issues
-- Check for missing indexes
-- Consider caching strategy
-- Add pagination where missing
-- Consider async processing
+- Prioritize database query issues (N+1, missing indexes).
+- Add pagination where missing.
+- Consider caching strategy.
+- Consider async processing for heavy workloads.
 
 ### If code quality issues found:
-- Prioritize maintainability
-- Consider refactoring
-- Add missing tests
-- Add documentation
-- Update coding standards
-- Recommend explicit boundary fixes (controller → service → repository)
+- Prioritize maintainability risks (god services, duplicated business rules).
+- Recommend explicit boundary fixes (controller → service → repository).
+- Add missing tests and documentation.
 
 ### If dependency issues found:
-- Update vulnerable packages
-- Remove unused dependencies
-- Pin versions for stability
-- Check for breaking changes
-- Add automated dependency scanning
+- Update vulnerable packages.
+- Remove unused dependencies.
+- Pin versions for stability.
+- Check for breaking changes.
+- Add automated dependency scanning.
 
-## Templates
+## Health Report Template
 
-### Health Report Template
 ```markdown
 # Backend Health Report
 
@@ -213,8 +206,16 @@ Present health report and ask:
 
 ## Summary
 - **Critical Issues**: [N]
-- **Warnings**: [N]
-- **Recommendations**: [N]
+- **High Issues**: [N]
+- **Medium Issues**: [N]
+- **Low Issues / Recommendations**: [N]
+
+## Commands Executed
+| Command | Exit Code | Notes |
+|---------|-----------|-------|
+| `npm test` | 1 | 3 failures in `auth.test.ts` |
+| `npm audit` | 0 | 1 moderate vulnerability in `lodash@4.17.20` |
+| `lsp_diagnostics` on `src/` | - | 12 errors, 4 warnings |
 
 ## Critical Issues (Fix Immediately)
 
@@ -222,6 +223,7 @@ Present health report and ask:
 - **File**: `src/repositories/user.ts:45`
 - **Severity**: Critical
 - **Category**: Security
+- **Evidence**: `grep -n "SELECT.*\${" src/repositories/user.ts` returned string-interpolated SQL.
 - **Description**: Raw SQL query with string concatenation
 - **Impact**: Attacker can read/modify any data, bypass authentication
 - **Recommendation**: Use parameterized queries
@@ -229,44 +231,40 @@ Present health report and ask:
   ```typescript
   // Before (VULNERABLE)
   const query = `SELECT * FROM users WHERE id = '${userId}'`;
-  
+
   // After (SECURE)
   const query = 'SELECT * FROM users WHERE id = $1';
   const result = await db.query(query, [userId]);
   ```
 
-## Warnings (Fix Soon)
+## High Issues (Fix Soon)
 
-### 1. Missing Database Index
-- **File**: `prisma/schema.prisma:12`
-- **Severity**: Warning
-- **Category**: Performance
-- **Description**: Email field is queried frequently but not indexed
-- **Impact**: Slow user lookups, poor performance at scale
-- **Recommendation**: Add unique index
-  ```prisma
-  model User {
-    email String @unique
-    @@index([email])
-  }
-  ```
+### 1. Failing Authentication Tests
+- **File**: `tests/auth.test.ts:78`
+- **Severity**: High
+- **Category**: Quality / Security
+- **Evidence**: `npm test` output: `expected 401, got 200`.
+- **Description**: Login endpoint returns 200 for invalid credentials.
+- **Impact**: Auth bypass risk.
+- **Recommendation**: Verify password hash comparison and reject invalid credentials.
 
-## Recommendations (Consider)
+## Medium Issues (Plan to Fix)
 
-### 1. Add Input Validation
+### 1. Missing Health Endpoint
+- **File**: `src/app.ts`
+- **Severity**: Medium
+- **Category**: Observability
+- **Evidence**: Smoke test `curl http://localhost:3000/health` returned `404 Not Found`.
+- **Recommendation**: Add `/health` and `/ready` endpoints.
+
+## Low / Recommendations (Consider)
+
+### 1. Add Input Validation Schema
 - **File**: `src/controllers/user.ts:20`
-- **Severity**: Info
+- **Severity**: Low
 - **Category**: Quality
-- **Description**: No input validation on user creation endpoint
-- **Impact**: Potential data integrity issues, security risks
-- **Recommendation**: Add Zod schema validation
-  ```typescript
-  const CreateUserSchema = z.object({
-    email: z.string().email(),
-    password: z.string().min(8).max(100),
-    name: z.string().min(1).max(100)
-  });
-  ```
+- **Evidence**: Route handler does not import any validation library.
+- **Recommendation**: Add Zod/Pydantic validation for request bodies.
 
 ## Scores by Category
 | Category | Score | Notes |
@@ -285,112 +283,12 @@ Present health report and ask:
 - **Normalization / Data Integrity**: [Good / Mixed / Poor]
 ```
 
-### Structural Review Template
-```markdown
-## Structural Review
-
-### Controller / Handler
-- Are controllers thin and transport-focused?
-- Do they avoid business branching, raw SQL, and transaction ownership?
-
-### Service / Use Case
-- Does each service have one cohesive responsibility?
-- Are business rules centralized instead of duplicated across endpoints?
-- Are transactions owned here when multiple writes must succeed together?
-
-### Repository / Persistence
-- Do repositories avoid business decisions and external side effects?
-- Are query methods aligned with use cases instead of generic catch-all methods?
-
-### Domain / Data Integrity
-- Are invariants explicit?
-- Does the schema appear normalized by default?
-- Are denormalized fields justified and maintained safely?
-```
-
-### Security Checklist Template
-```markdown
-## Security Checklist
-
-### Authentication
-- [ ] Password hashing (bcrypt/argon2)
-- [ ] JWT expiration set
-- [ ] Refresh token rotation
-- [ ] Session management
-- [ ] OAuth implementation
-- [ ] No credentials in logs
-
-### Authorization
-- [ ] Role-based access control
-- [ ] Resource ownership checks
-- [ ] API endpoint protection
-- [ ] Middleware validation
-- [ ] Permission checks
-
-### Data Protection
-- [ ] SQL injection prevention
-- [ ] XSS prevention
-- [ ] CSRF protection
-- [ ] Input sanitization
-- [ ] Output encoding
-- [ ] File upload validation
-
-### Network Security
-- [ ] HTTPS enforced
-- [ ] Security headers (HSTS, CSP, etc.)
-- [ ] CORS configured
-- [ ] Rate limiting
-- [ ] DDoS protection
-
-### Secrets Management
-- [ ] No secrets in code
-- [ ] Environment variables
-- [ ] .env in .gitignore
-- [ ] Secrets not logged
-- [ ] API key rotation
-```
-
-### Performance Checklist Template
-```markdown
-## Performance Checklist
-
-### Database
-- [ ] Indexes on foreign keys
-- [ ] Indexes on frequently queried columns
-- [ ] No N+1 queries
-- [ ] Connection pooling
-- [ ] Query result limits
-- [ ] Appropriate use of transactions
-- [ ] 3NF by default unless documented denormalization exists
-- [ ] Composite indexes match actual filter/sort order
-
-### API
-- [ ] Response time < 200ms
-- [ ] Pagination on lists
-- [ ] Compression enabled
-- [ ] Caching headers
-- [ ] Caching for expensive operations
-
-### Application
-- [ ] Async I/O
-- [ ] No blocking operations
-- [ ] Memory usage bounded
-- [ ] CPU usage reasonable
-- [ ] Graceful shutdown
-
-### Scalability
-- [ ] Stateless design
-- [ ] Horizontal scaling
-- [ ] No single point of failure
-- [ ] Load testing done
-```
-
 ## Edge Cases
 
-- **No code to check**: Run `backend-discovery` first
-- **Large codebase**: Focus on critical paths first, sample other areas
-- **Legacy code**: Be lenient with warnings, focus on critical security issues
-- **Multiple languages**: Check each separately, compare against language-specific best practices
-- **No memory files**: Suggest running `backend-discovery` to get context
-- **Third-party dependencies**: Note as external risk, recommend dependency scanning
-- **Pattern mismatch across modules**: Flag inconsistency if some modules are layered correctly and others bypass boundaries
+- **No code to check**: Run `backend-scan` first.
+- **Large codebase**: Run global tests/audits, then sample critical paths.
+- **Legacy code**: Be lenient with warnings, focus on critical security issues.
+- **Multiple languages**: Check each separately against language-specific best practices.
+- **No memory files**: Suggest running `backend-scan` to get context.
+- **No health endpoint**: Skip smoke test and note under recommendations.
+- **Missing tooling**: Report the missing tool as a Medium finding with the exact error.

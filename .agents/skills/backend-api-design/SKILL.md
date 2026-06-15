@@ -15,16 +15,23 @@ description: "Design API endpoints including resource structure, request/respons
 
 ## Design Process
 
+### Step 0: Context Loading
+
+Before proposing endpoints, read project memory for existing context:
+
+- `project-overview.md` — project type and exposed resources
+- `tech-stack.md` — language, framework, auth choices
+- `api-patterns.md` — existing API conventions and endpoint inventory
+- `db-schema.md` — data model the API exposes
+- `decisions.md` — prior API or architecture decisions
+
+If memory is stale or empty, suggest running `backend-scan` first.
+
 ### Step 0.5: Tool-Assisted Discovery (MANDATORY)
 
-Before proposing endpoints, inspect the real codebase and context with OpenCode tools:
+Before proposing endpoints, inspect the real codebase and context with OpenCode tools.
 
-1. **`glob`** to find route files, controllers, API modules, schemas, and OpenAPI specs
-2. **`read`** to inspect existing route conventions, middleware, validators, and memory files
-3. **`grep`** to locate existing endpoints, auth middleware, pagination helpers, error mappers, and version prefixes
-4. **`ast_grep_search`** for structural route patterns when text search is noisy
-5. **`lsp_symbols` / `lsp_find_references`** to trace handlers, DTOs, and shared response types in supported languages
-6. **`task` with `subagent_type="explore"`** for parallel codebase search and **`subagent_type="librarian"`** when external protocol or framework guidance is needed
+See `_shared/tool-rules.md` for the canonical tool-usage rules.
 
 ### Step 1: Requirements Gathering
 
@@ -41,31 +48,7 @@ Always confirm:
 
 ### Step 1.5: API Principles (MANDATORY)
 
-Apply these rules before defining endpoints:
-
-1. **RESTful by default**
-   - Prefer resource-oriented URLs and standard HTTP methods
-   - Keep nouns in paths and move business verbs to sub-resources only when necessary
-
-2. **Idempotency and retry safety**
-   - GET, PUT, and DELETE should be naturally idempotent
-   - For critical POST flows (payments, job submission, imports), define idempotency keys when retries are expected
-
-3. **Validation at the boundary**
-   - Validate path params, query params, headers, and body payloads before business logic runs
-   - Reject malformed requests with a consistent error shape
-
-4. **Authorization is part of the contract**
-   - Define who can call each endpoint
-   - Prefer role-based access control for admin/ERP flows and resource ownership checks where needed
-
-5. **Consistency and operability**
-   - Standardize error responses, pagination, filtering, sorting, and versioning
-   - Add rate limiting and audit-sensitive endpoint notes where abuse or privileged actions matter
-
-6. **Secure-by-default responses**
-   - Never expose secrets, internal stack traces, or fields clients do not need
-   - Require encryption in transit and document sensitive fields that need masking/redaction in logs
+Apply the API principles in `_shared/principles.md` before defining endpoints.
 
 ### Step 2: API Protocol Selection
 

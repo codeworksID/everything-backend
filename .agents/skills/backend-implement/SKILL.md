@@ -1,19 +1,20 @@
 ---
 name: backend-implement
-description: "Generate code from architecture, API, and database designs. Creates project structure, controllers, services, repositories, models, and tests. Supports Node.js, Python, Go, and Java. Reads from memory files for full context. Use this skill when the user says 'implement', 'generate code', 'build this', or after architecture and API design are complete."
+description: "Turn backend designs into code or evolve existing code. Supports Node.js, Python, Go, and Java. Reads from memory files for full context. Activate when the user says 'implement', 'generate code', 'build this', or wants to add, split, or refactor backend code."
 ---
 
 # Backend Implement
 
 ## When to Activate
 
-- User wants to generate code from design
+- User wants to generate code from a design
 - User says "implement", "generate code", "build this"
 - After architecture and API design are complete
-- User asks "how do I build this?"
-- Starting implementation of a new feature
+- User asks "how do I build this?" or "how do I add X?"
+- Adding a new endpoint, field, service, middleware, or repository query to existing code
+- Splitting a fat controller, service, or repository
 
-## Implementation Process
+## Core Process
 
 ### Step 1: Context Loading
 
@@ -26,63 +27,28 @@ Read all memory files for full context:
 - `decisions.md` - Architecture decisions
 
 If memory is empty or stale, suggest running:
-- `backend-discovery` first
+- `backend-scan` first
 - `backend-architect` for architecture
 - `backend-api-design` for endpoints
 - `backend-db-design` for schema
 
-### Step 1.5: Implementation Rules (MANDATORY)
+### Step 2: Implementation Rules (MANDATORY)
 
-Apply these rules before generating code:
+Apply the code/architecture, API, system, and security principles in `_shared/principles.md` before writing or editing code.
 
-1. **Thin transport layer**
-   - Controllers/handlers validate transport input, call a use case/service, and map output/errors
-   - Controllers must not contain business rules, persistence logic, or transaction orchestration
+### Step 3: Tool Usage Rules (MANDATORY)
 
-2. **Business logic lives in services/use cases**
-   - Services own workflow, invariants, authorization decisions, and transaction boundaries
-   - Break large workflows into smaller use-case-focused services when one class gains multiple reasons to change
+Use OpenCode tools during implementation.
 
-3. **Repositories are persistence adapters**
-   - Repositories fetch/store data and expose intent-oriented methods
-   - Repositories must not call HTTP APIs, send emails, or contain domain policy
+See `_shared/tool-rules.md` for the canonical tool-usage rules.
 
-4. **Depend on abstractions**
-   - Prefer interfaces/ports for repositories, clocks, ID generators, queues, and external clients
-   - Wire concrete dependencies in a composition root or module setup layer
+## Greenfield Generation
 
-5. **Validation happens at multiple layers**
-   - Request schema validation at the boundary
-   - Business invariant validation in services/domain
-   - Database constraints for persistence invariants
+Use this workflow when building from a design.
 
-6. **Errors are typed and intentional**
-   - Use domain/application errors for expected failure modes
-   - Map them centrally to HTTP/gRPC responses
+### 1. Project Structure
 
-7. **Tests are part of generation**
-    - Generate unit tests for business rules
-    - Generate integration tests for repositories and DB-backed flows
-    - Generate endpoint/contract tests for transport behavior
-
-8. **Operational and security defaults**
-   - Implement role-based access control, least privilege, and audit logging where privileged workflows exist
-   - Sanitize and validate inputs before business processing and use safe defaults for secrets/config
-   - Prefer observability hooks early: structured logging, metrics, health checks, and correlation IDs when the stack supports them
-
-### Step 1.6: Tool Usage Rules (MANDATORY)
-
-Use OpenCode tools during implementation, not just prose reasoning:
-
-1. **`glob`** to discover adjacent modules, tests, configs, and generated files
-2. **`read`** to inspect existing implementations before generating new ones
-3. **`grep`** to find patterns, validators, error classes, routes, and test helpers
-4. **`ast_grep_search`** to match structural patterns such as service interfaces, repository implementations, and handler signatures
-5. **`lsp_goto_definition`, `lsp_find_references`, and `lsp_symbols`** to reuse existing abstractions correctly
-6. **`lsp_diagnostics`** after edits to catch errors early
-7. **`task` with `subagent_type="explore"`** for multi-area codebase search and **`subagent_type="librarian"`** for external library usage research
-
-### Step 2: Project Structure Creation
+Choose the structure that matches the stack.
 
 #### Node.js/Express Structure
 ```
@@ -91,7 +57,7 @@ src/
 ├── services/        # Business logic
 ├── repositories/    # Data access
 ├── models/          # Database models
-├── middleware/       # Express middleware
+├── middleware/      # Express middleware
 ├── routes/          # API routes
 ├── utils/           # Utility functions
 ├── config/          # Configuration
@@ -126,440 +92,192 @@ internal/
 ├── services/        # Business logic
 ├── repositories/    # Data access
 ├── models/          # Database models
-├── middleware/       # Gin middleware
+├── middleware/      # Gin middleware
 └── config/          # Configuration
 pkg/                 # Public packages
 cmd/                 # Entry points
 tests/
 ```
 
-### Step 3: Code Generation
+### 2. What to Generate
 
-#### Controller/Handler Generation
-- Generate request handling
-- Generate input validation (Zod, Pydantic, etc.)
-- Generate response formatting
-- Generate error handling
-- Generate logging
+By layer:
 
-#### Service Layer Generation
-- Generate business logic
-- Generate data transformation
-- Generate orchestration between repositories
-- Generate domain invariant checks
-- Generate authorization checks where relevant
-- Generate transaction boundaries for multi-write flows
-- Generate error handling
-- Generate logging
+- **Controllers/handlers**: request parsing, schema validation, response formatting, error mapping
+- **Services/use cases**: business workflow, invariants, authorization, transaction boundaries for multi-write flows
+- **Repositories**: CRUD and intent-oriented queries, transaction participation, interfaces/ports where idiomatic
+- **Models/migrations**: schema definitions, relationships, constraints, migrations, seed data
+- **Configuration**: env templates, DB connection, logging, middleware wiring, central error mapping
+- **Dependencies**: framework, ORM/driver, validation, testing, linting, and DI/container libraries only when they meaningfully simplify the stack
 
-#### Repository Generation
-- Generate CRUD operations
-- Generate query building
-- Generate transaction handling
-- Generate error handling
-- Generate connection management
-- Generate interfaces/ports where language patterns support it
+### 3. Decision Trees
 
-#### Model Generation
-- Generate database models
-- Generate relationships
-- Generate validations
-- Generate timestamps
-- Generate migrations
-- Respect normalization and constraint decisions from `db-schema.md`
+#### REST API
+- Generate routes, validation, response formatting, error handling middleware, OpenAPI spec
 
-### Step 4: Dependency Setup
+#### GraphQL
+- Generate schema definitions, resolvers, data loaders, subscriptions, federation config if needed
 
-Generate manifest files:
+#### Database operations
+- Generate ORM models, migrations, seed scripts, query builders, connection pooling, constraints matching `db-schema.md`
 
-- **Node.js**: `package.json` with dependencies and scripts
-- **Python**: `requirements.txt` or `pyproject.toml`
-- **Go**: `go.mod` with required modules
-- **Java**: `pom.xml` or `build.gradle`
+#### Authentication
+- Generate auth middleware, JWT handling, password hashing, RBAC, session management
 
-Include:
-- Framework dependencies
-- Database drivers/ORMs
-- Validation libraries
-- Testing frameworks
-- Development tools (linting, formatting)
-- DI/container support only if the language/framework meaningfully benefits from it
+#### WebSocket
+- Generate server setup, connection management, message handlers, room/channel logic, auth
 
-### Step 5: Configuration
+### 4. User Confirmation
 
-Generate config files:
+Present an implementation summary:
 
-- Environment variables template (`.env.example`)
-- Database connection config
-- Logging configuration
-- Middleware setup
-- Error handling setup
-
-### Step 6: User Confirmation
-
-Present generated code:
-
-```markdown
-# Implementation Summary
-
-## Project Structure
-[Show tree of generated files]
-
-## Key Files
-- `src/controllers/user.controller.ts` - User API handlers
-- `src/services/user.service.ts` - User business logic
-- `src/repositories/user.repository.ts` - User data access
-- `src/models/user.model.ts` - User database model
-
-## Dependencies Added
-- express, prisma, zod, dotenv
-
-## Next Steps
-- [ ] Review generated code
-- [ ] Run database migrations
-- [ ] Start development server
-- [ ] Test endpoints
-- [ ] Verify controllers stay thin and services own business rules
-- [ ] Verify repository boundaries and transaction placement
-```
+- Generated file tree
+- Key files by layer
+- Dependencies added
+- Next steps: review, migrate, run, test, verify layer boundaries
 
 Ask:
 - "Does this implementation look correct?"
 - "Any changes needed?"
-- "Should I generate or expand tests by layer (unit, integration, endpoint)?"
+- "Should I generate or expand tests by layer?"
 - "Should I save progress to memory?"
 
-## Decision Trees
+## Modifying Existing Code
 
-### If REST API:
-- Generate Express/FastAPI/Gin routes
-- Generate request validation middleware
-- Generate response formatting
-- Generate error handling middleware
-- Generate OpenAPI spec
+Most backend work is evolution, not greenfield. Use these workflows.
 
-### If GraphQL:
-- Generate schema definitions
-- Generate resolvers
-- Generate data loaders (for N+1 prevention)
-- Generate subscriptions for real-time
-- Generate federation config (if needed)
+### Workflow: Add a New Endpoint to an Existing Controller
 
-### If database operations:
-- Generate ORM models (Prisma, SQLAlchemy, GORM)
-- Generate migrations
-- Generate seed data scripts
-- Generate query builders
-- Generate connection pooling
-- Ensure DB constraints and transaction boundaries match schema guidance
+1. Read the existing controller, service, repository, and route files
+2. Reuse the existing request/response schema style and error mapping
+3. Add the route entry before implementing the handler
+4. Add the handler as thin transport: parse input, call service, map output/error
+5. Add the service method for the business workflow; place transactions if the flow writes to multiple stores
+6. Add or extend repository methods as intent-oriented queries
+7. Add unit tests for the service and endpoint/contract tests for the route
+8. Run `lsp_diagnostics` and existing tests before finishing
 
-### If authentication:
-- Generate auth middleware
-- Generate JWT handling
-- Generate password hashing
-- Generate role-based access control
-- Generate session management
+### Workflow: Add a New Column/Field to an Existing Model
 
-### If WebSocket:
-- Generate WebSocket server setup
-- Generate connection management
-- Generate message handlers
-- Generate room/channel logic
-- Generate authentication for WebSocket
+1. Check `db-schema.md` and existing model/entity definitions
+2. Add the field to the model, schema/serializer, and any DTO used across layers
+3. Add the migration that matches the database decision (default, nullable, index, foreign key, etc.)
+4. Update repository queries that select, filter, or order by the new field
+5. Update service invariants that depend on the field
+6. Update request/response schemas and validation rules
+7. Add integration tests for repository behavior and migration correctness
+8. Update seed data and fixtures if they break
 
-## Templates
+### Workflow: Split a Fat Controller or Service
 
-### Express Controller Template
+1. Identify responsibilities: transport mapping, business workflow, persistence, external calls
+2. Extract a new service/use case for one cohesive workflow at a time
+3. Move business rules, invariants, and transaction ownership into the new service
+4. Leave the controller/handler as thin transport glue
+5. Extract repository concerns into intent-oriented repository methods
+6. Update composition root or dependency wiring to inject the new service
+7. Add tests for the extracted service before removing logic from the old one
+8. Delete or deprecate the old methods once callers are migrated
+
+### Workflow: Add Middleware to an Existing Pipeline
+
+1. Read the current middleware stack and registration order
+2. Decide where the new middleware belongs: auth, validation, logging, rate limiting, error recovery, correlation IDs
+3. Implement the middleware as a focused unit with no business branching beyond its scope
+4. Register it in the framework pipeline in the correct order
+5. Add endpoint/contract tests that exercise the new behavior
+6. Verify existing routes still pass with `lsp_diagnostics` and the test suite
+
+### Workflow: Refactor a Repository Query
+
+1. Read the current query, indexes, and callers
+2. Preserve the existing repository interface/signature unless the change is intentional
+3. Optimize or simplify the query while keeping it persistence-only
+4. Run integration tests against the real database or a close test double
+5. Check query plans or execution if the database supports it
+6. Update callers only if the return shape changes
+7. Never move business decisions into the repository; keep them in services
+
+## Pattern Reference
+
+### Minimal Controller Pattern (Express)
 ```typescript
-import { Request, Response, NextFunction } from 'express';
-import { z } from 'zod';
-import { UserService } from '../services/user.service';
-import { CreateUserSchema } from '../schemas/user.schema';
-
-export class UserController {
-  constructor(private userService: UserService) {}
-
-  async getUsers(req: Request, res: Response, next: NextFunction) {
-    try {
-      const page = Number(req.query.page) || 1;
-      const perPage = Number(req.query.per_page) || 20;
-      const result = await this.userService.getUsers(page, perPage);
-      res.json({
-        data: result.users,
-        meta: {
-          total: result.total,
-          page,
-          per_page: perPage,
-          total_pages: Math.ceil(result.total / perPage)
-        }
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  async getUser(req: Request, res: Response, next: NextFunction) {
-    try {
-      const user = await this.userService.getUser(req.params.id);
-      if (!user) {
-        return res.status(404).json({
-          error: { code: 'not_found', message: 'User not found' }
-        });
-      }
-      res.json({ data: user });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  async createUser(req: Request, res: Response, next: NextFunction) {
-    try {
-      const validated = CreateUserSchema.parse(req.body);
-      const user = await this.userService.createUser(validated);
-      res.status(201)
-        .location(`/api/v1/users/${user.id}`)
-        .json({ data: user });
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return res.status(422).json({
-          error: {
-            code: 'validation_error',
-            message: 'Request validation failed',
-            details: error.errors
-          }
-        });
-      }
-      next(error);
-    }
-  }
+async createUser(req, res, next) {
+  const dto = CreateUserSchema.parse(req.body);
+  const user = await this.userService.createUser(dto);
+  res.status(201).json({ data: user });
 }
 ```
 
-### Layering Rules Template
-```markdown
-## Layering Rules
+### Minimal Router Pattern (FastAPI)
+```python
+@router.post("/", status_code=status.HTTP_201_CREATED)
+async def create_user(
+    data: UserCreate,
+    svc: UserService = Depends(get_user_service)
+):
+    return svc.create_user(data)
+```
+
+### Minimal Handler Pattern (Go/Gin)
+```go
+func (h *UserHandler) CreateUser(c *gin.Context) {
+    var dto CreateUserDto
+    if err := c.ShouldBindJSON(&dto); err != nil { /* 400 */ }
+    user, err := h.svc.CreateUser(c.Request.Context(), dto)
+    // map err to HTTP, otherwise 201
+}
+```
+
+### Minimal Service Pattern
+```typescript
+async createUser(dto: CreateUserDto): Promise<User> {
+  const existing = await this.repo.findByEmail(dto.email);
+  if (existing) throw new ConflictError('Email already registered');
+  return this.repo.create(dto);
+}
+```
+
+### Layering Rules
 
 - Controllers/handlers: transport only, no business branching beyond response mapping
 - Services/use cases: business workflow, invariants, authorization, transaction ownership
 - Repositories: persistence only, no transport or domain orchestration
 - External adapters: email, queues, storage, HTTP clients behind interfaces/ports
 - Composition root: assemble concrete implementations and inject dependencies
-```
 
-### FastAPI Router Template
-```python
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-from typing import List
-from app.schemas.user import User, UserCreate, UserUpdate
-from app.services.user_service import UserService
-from app.core.database import get_db
-
-router = APIRouter(prefix="/users", tags=["users"])
-
-@router.get("/", response_model=List[User])
-async def get_users(
-    page: int = 1,
-    per_page: int = 20,
-    db: Session = Depends(get_db)
-):
-    service = UserService(db)
-    return service.get_users(page, per_page)
-
-@router.get("/{user_id}", response_model=User)
-async def get_user(user_id: str, db: Session = Depends(get_db)):
-    service = UserService(db)
-    user = service.get_user(user_id)
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
-    return user
-
-@router.post("/", response_model=User, status_code=status.HTTP_201_CREATED)
-async def create_user(
-    user_data: UserCreate,
-    db: Session = Depends(get_db)
-):
-    service = UserService(db)
-    return service.create_user(user_data)
-```
-
-### Go Handler Template
-```go
-package handlers
-
-import (
-    "net/http"
-    "strconv"
-    "github.com/gin-gonic/gin"
-    "github.com/yourorg/yourapp/internal/services"
-)
-
-type UserHandler struct {
-    userService *services.UserService
-}
-
-func NewUserHandler(userService *services.UserService) *UserHandler {
-    return &UserHandler{userService: userService}
-}
-
-func (h *UserHandler) GetUsers(c *gin.Context) {
-    page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-    perPage, _ := strconv.Atoi(c.DefaultQuery("per_page", "20"))
-    
-    users, total, err := h.userService.GetUsers(c.Request.Context(), page, perPage)
-    if err != nil {
-        c.JSON(http.StatusInternalServerError, gin.H{
-            "error": gin.H{"code": "internal_error", "message": "Failed to fetch users"},
-        })
-        return
-    }
-    
-    c.JSON(http.StatusOK, gin.H{
-        "data": users,
-        "meta": gin.H{
-            "total":       total,
-            "page":        page,
-            "per_page":    perPage,
-            "total_pages": (total + perPage - 1) / perPage,
-        },
-    })
-}
-```
-
-### Service Layer Template
-```typescript
-export interface UserRepository {
-  findAll(page: number, perPage: number): Promise<User[]>;
-  count(): Promise<number>;
-  findByEmail(email: string): Promise<User | null>;
-  create(data: CreateUserRecord): Promise<User>;
-}
-
-export interface LoggerPort {
-  info(message: string, metadata?: Record<string, unknown>): void;
-  warn(message: string, metadata?: Record<string, unknown>): void;
-  error(message: string, metadata?: Record<string, unknown>): void;
-}
-
-export class UserService {
-  constructor(
-    private userRepository: UserRepository,
-    private logger: LoggerPort
-  ) {}
-
-  async getUsers(page: number, perPage: number) {
-    this.logger.info('Fetching users', { page, perPage });
-    const [users, total] = await Promise.all([
-      this.userRepository.findAll(page, perPage),
-      this.userRepository.count()
-    ]);
-    return { users, total };
-  }
-
-  async createUser(data: CreateUserDto): Promise<User> {
-    if (data.password.length < 12) {
-      throw new ValidationError('Password must be at least 12 characters long');
-    }
-
-    const existing = await this.userRepository.findByEmail(data.email);
-    if (existing) {
-      throw new ConflictError('Email already registered');
-    }
-    const passwordHash = await bcrypt.hash(data.password, 12);
-    const user = await this.userRepository.create({
-      ...data,
-      passwordHash
-    });
-    this.logger.info('User created', { userId: user.id });
-    return user;
-  }
-}
-```
-
-### Transaction Placement Template
-```markdown
-## Transaction Rules
+### Transaction Rules
 
 - Open transactions in the application/service layer, not in controllers
 - Repositories may participate in a transaction but should not decide cross-repository workflow
 - Keep transactions short and side-effect free
 - External side effects (email, webhooks, queues) happen after commit or through an outbox pattern
-```
 
-### Test Template
-```typescript
-import { UserService } from '../user.service';
+### Testing Matrix
 
-class FakeUserRepository {
-  findAll = jest.fn();
-  count = jest.fn();
-  findByEmail = jest.fn();
-  create = jest.fn();
-}
-
-class FakeLogger {
-  info = jest.fn();
-  error = jest.fn();
-  warn = jest.fn();
-}
-
-describe('UserService', () => {
-  let service: UserService;
-  let mockRepo: FakeUserRepository;
-  let logger: FakeLogger;
-
-  beforeEach(() => {
-    mockRepo = new FakeUserRepository();
-    logger = new FakeLogger();
-    service = new UserService(mockRepo, logger);
-  });
-
-  describe('getUsers', () => {
-    it('should return paginated users', async () => {
-      const users = [{ id: '1', email: 'test@test.com', name: 'Test' }];
-      mockRepo.findAll.mockResolvedValue(users);
-      mockRepo.count.mockResolvedValue(1);
-
-      const result = await service.getUsers(1, 20);
-
-      expect(result.users).toEqual(users);
-      expect(result.total).toBe(1);
-      expect(mockRepo.findAll).toHaveBeenCalledWith(1, 20);
-    });
-  });
-});
-```
-
-### Testing Matrix Template
-```markdown
-## Testing Matrix
-
-### Unit Tests
+#### Unit Tests
 - Service/use-case invariants
 - Error branches and authorization failures
 - Domain calculations and state transitions
 
-### Integration Tests
+#### Integration Tests
 - Repository behavior against the real database or a close test double
 - Migration correctness for new schema changes
 - Transaction rollback behavior
 
-### Endpoint / Contract Tests
+#### Endpoint / Contract Tests
 - Request validation
 - Response shape and error mapping
 - Authentication/authorization behavior
-```
 
 ## Edge Cases
 
-- **No design exists**: Run backend-architect and backend-api-design first
+- **No design exists**: Run `backend-architect` and `backend-api-design` first
+- **Memory is stale**: Run `backend-scan`
 - **Complex business logic**: Break into smaller services, use domain modeling
-- **Legacy code**: Ask user about integration approach (strangler pattern, rewrite)
+- **Legacy code**: Prefer the strangler pattern; wrap and replace incrementally
 - **Multiple languages**: Ask user which to prioritize
-- **Large project**: Generate incrementally, confirm each layer before next
+- **Large project**: Change incrementally, confirm each layer before the next
 - **Existing tests**: Match existing test patterns and frameworks
 - **Fat controller temptation**: Move rules into services/use cases before adding more endpoints
 - **Repository doing too much**: Split query concerns from business workflow and inject collaborators
