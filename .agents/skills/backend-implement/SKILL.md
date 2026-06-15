@@ -31,6 +31,40 @@ If memory is empty or stale, suggest running:
 - `backend-api-design` for endpoints
 - `backend-db-design` for schema
 
+### Step 1.5: Implementation Rules (MANDATORY)
+
+Apply these rules before generating code:
+
+1. **Thin transport layer**
+   - Controllers/handlers validate transport input, call a use case/service, and map output/errors
+   - Controllers must not contain business rules, persistence logic, or transaction orchestration
+
+2. **Business logic lives in services/use cases**
+   - Services own workflow, invariants, authorization decisions, and transaction boundaries
+   - Break large workflows into smaller use-case-focused services when one class gains multiple reasons to change
+
+3. **Repositories are persistence adapters**
+   - Repositories fetch/store data and expose intent-oriented methods
+   - Repositories must not call HTTP APIs, send emails, or contain domain policy
+
+4. **Depend on abstractions**
+   - Prefer interfaces/ports for repositories, clocks, ID generators, queues, and external clients
+   - Wire concrete dependencies in a composition root or module setup layer
+
+5. **Validation happens at multiple layers**
+   - Request schema validation at the boundary
+   - Business invariant validation in services/domain
+   - Database constraints for persistence invariants
+
+6. **Errors are typed and intentional**
+   - Use domain/application errors for expected failure modes
+   - Map them centrally to HTTP/gRPC responses
+
+7. **Tests are part of generation**
+   - Generate unit tests for business rules
+   - Generate integration tests for repositories and DB-backed flows
+   - Generate endpoint/contract tests for transport behavior
+
 ### Step 2: Project Structure Creation
 
 #### Node.js/Express Structure
@@ -95,6 +129,9 @@ tests/
 - Generate business logic
 - Generate data transformation
 - Generate orchestration between repositories
+- Generate domain invariant checks
+- Generate authorization checks where relevant
+- Generate transaction boundaries for multi-write flows
 - Generate error handling
 - Generate logging
 
@@ -104,6 +141,7 @@ tests/
 - Generate transaction handling
 - Generate error handling
 - Generate connection management
+- Generate interfaces/ports where language patterns support it
 
 #### Model Generation
 - Generate database models
@@ -111,6 +149,7 @@ tests/
 - Generate validations
 - Generate timestamps
 - Generate migrations
+- Respect normalization and constraint decisions from `db-schema.md`
 
 ### Step 4: Dependency Setup
 
@@ -127,6 +166,7 @@ Include:
 - Validation libraries
 - Testing frameworks
 - Development tools (linting, formatting)
+- DI/container support only if the language/framework meaningfully benefits from it
 
 ### Step 5: Configuration
 
@@ -162,12 +202,14 @@ Present generated code:
 - [ ] Run database migrations
 - [ ] Start development server
 - [ ] Test endpoints
+- [ ] Verify controllers stay thin and services own business rules
+- [ ] Verify repository boundaries and transaction placement
 ```
 
 Ask:
 - "Does this implementation look correct?"
 - "Any changes needed?"
-- "Should I generate tests?"
+- "Should I generate or expand tests by layer (unit, integration, endpoint)?"
 - "Should I save progress to memory?"
 
 ## Decision Trees
@@ -192,6 +234,7 @@ Ask:
 - Generate seed data scripts
 - Generate query builders
 - Generate connection pooling
+- Ensure DB constraints and transaction boundaries match schema guidance
 
 ### If authentication:
 - Generate auth middleware
@@ -273,6 +316,17 @@ export class UserController {
     }
   }
 }
+```
+
+### Layering Rules Template
+```markdown
+## Layering Rules
+
+- Controllers/handlers: transport only, no business branching beyond response mapping
+- Services/use cases: business workflow, invariants, authorization, transaction ownership
+- Repositories: persistence only, no transport or domain orchestration
+- External adapters: email, queues, storage, HTTP clients behind interfaces/ports
+- Composition root: assemble concrete implementations and inject dependencies
 ```
 
 ### FastAPI Router Template
@@ -360,10 +414,23 @@ func (h *UserHandler) GetUsers(c *gin.Context) {
 
 ### Service Layer Template
 ```typescript
+export interface UserRepository {
+  findAll(page: number, perPage: number): Promise<User[]>;
+  count(): Promise<number>;
+  findByEmail(email: string): Promise<User | null>;
+  create(data: CreateUserRecord): Promise<User>;
+}
+
+export interface LoggerPort {
+  info(message: string, metadata?: Record<string, unknown>): void;
+  warn(message: string, metadata?: Record<string, unknown>): void;
+  error(message: string, metadata?: Record<string, unknown>): void;
+}
+
 export class UserService {
   constructor(
     private userRepository: UserRepository,
-    private logger: Logger
+    private logger: LoggerPort
   ) {}
 
   async getUsers(page: number, perPage: number) {
@@ -376,6 +443,10 @@ export class UserService {
   }
 
   async createUser(data: CreateUserDto): Promise<User> {
+    if (data.password.length < 12) {
+      throw new ValidationError('Password must be at least 12 characters long');
+    }
+
     const existing = await this.userRepository.findByEmail(data.email);
     if (existing) {
       throw new ConflictError('Email already registered');
@@ -391,22 +462,42 @@ export class UserService {
 }
 ```
 
+### Transaction Placement Template
+```markdown
+## Transaction Rules
+
+- Open transactions in the application/service layer, not in controllers
+- Repositories may participate in a transaction but should not decide cross-repository workflow
+- Keep transactions short and side-effect free
+- External side effects (email, webhooks, queues) happen after commit or through an outbox pattern
+```
+
 ### Test Template
 ```typescript
 import { UserService } from '../user.service';
-import { UserRepository } from '../../repositories/user.repository';
+
+class FakeUserRepository {
+  findAll = jest.fn();
+  count = jest.fn();
+  findByEmail = jest.fn();
+  create = jest.fn();
+}
+
+class FakeLogger {
+  info = jest.fn();
+  error = jest.fn();
+  warn = jest.fn();
+}
 
 describe('UserService', () => {
   let service: UserService;
-  let mockRepo: jest.Mocked<UserRepository>;
+  let mockRepo: FakeUserRepository;
+  let logger: FakeLogger;
 
   beforeEach(() => {
-    mockRepo = {
-      findAll: jest.fn(),
-      findById: jest.fn(),
-      create: jest.fn(),
-    } as any;
-    service = new UserService(mockRepo, console as any);
+    mockRepo = new FakeUserRepository();
+    logger = new FakeLogger();
+    service = new UserService(mockRepo, logger);
   });
 
   describe('getUsers', () => {
@@ -425,6 +516,26 @@ describe('UserService', () => {
 });
 ```
 
+### Testing Matrix Template
+```markdown
+## Testing Matrix
+
+### Unit Tests
+- Service/use-case invariants
+- Error branches and authorization failures
+- Domain calculations and state transitions
+
+### Integration Tests
+- Repository behavior against the real database or a close test double
+- Migration correctness for new schema changes
+- Transaction rollback behavior
+
+### Endpoint / Contract Tests
+- Request validation
+- Response shape and error mapping
+- Authentication/authorization behavior
+```
+
 ## Edge Cases
 
 - **No design exists**: Run backend-architect and backend-api-design first
@@ -433,3 +544,5 @@ describe('UserService', () => {
 - **Multiple languages**: Ask user which to prioritize
 - **Large project**: Generate incrementally, confirm each layer before next
 - **Existing tests**: Match existing test patterns and frameworks
+- **Fat controller temptation**: Move rules into services/use cases before adding more endpoints
+- **Repository doing too much**: Split query concerns from business workflow and inject collaborators

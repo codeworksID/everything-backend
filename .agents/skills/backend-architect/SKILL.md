@@ -29,6 +29,34 @@ Always confirm understanding:
 - "Let me confirm: [summary]. Is that correct?"
 - "Anything I'm missing?"
 
+### Step 1.5: Architecture Principles (MANDATORY)
+
+Before recommending any stack or pattern, apply these backend rules:
+
+1. **SOLID over convenience**
+   - Single Responsibility: controllers handle transport, services handle use cases, repositories handle persistence
+   - Open/Closed: extend behavior through composition and new modules, not giant conditionals
+   - Liskov Substitution: abstractions must be safely replaceable in tests and production
+   - Interface Segregation: keep contracts small and use-case-specific
+   - Dependency Inversion: business logic depends on interfaces/ports, not concrete frameworks or ORMs
+
+2. **Layering and dependency direction**
+   - Transport layer may depend on application layer
+   - Application layer may depend on domain and ports
+   - Infrastructure implements ports and depends inward
+   - Domain layer must not import HTTP, ORM, queue, or framework details
+
+3. **Boundaries before tooling**
+   - Define modules, use cases, aggregates, and ownership before choosing libraries
+   - Prefer modular monolith boundaries before jumping to microservices
+   - Every module should have one clear reason to change
+
+4. **Operational concerns are part of architecture**
+   - Define transaction boundaries
+   - Define error taxonomy and observability strategy
+   - Define authorization boundaries and audit requirements
+   - Define scaling assumptions and failure modes
+
 ### Step 2: Architecture Pattern Selection
 
 #### Monolith
@@ -98,6 +126,23 @@ graph TD
 
 4. **API Contracts**: High-level endpoint structure
 
+5. **Module Boundaries**:
+   - Define each module's responsibility
+   - Define inbound interfaces (controllers/handlers, consumers)
+   - Define outbound ports (repositories, external services, queues)
+   - State forbidden dependencies between modules
+
+6. **Transaction and consistency rules**:
+   - Identify which use cases require ACID transactions
+   - Identify eventual consistency flows and compensating actions
+   - State idempotency requirements for retries and async processing
+
+7. **Observability and runtime rules**:
+   - Structured logs with request/correlation IDs
+   - Metrics for critical flows and failure rates
+   - Health/readiness checks
+   - Tracing for cross-service flows when distributed
+
 ### Step 5: User Confirmation
 
 Present architecture overview and ask:
@@ -105,6 +150,8 @@ Present architecture overview and ask:
 - "Does this architecture meet your needs?"
 - "Any concerns about the tech stack choice?"
 - "Any missing components?"
+- "Are the module boundaries and dependency rules clear?"
+- "Should I proceed with detailed API/database design using these constraints?"
 - "Should I proceed with detailed API/database design?"
 
 ## Decision Trees
@@ -131,6 +178,18 @@ Present architecture overview and ask:
 - Choose language team is most familiar with
 - Use managed services (AWS RDS, etc.)
 - Avoid premature optimization
+
+### If domain is complex but team is still small:
+- Prefer modular monolith first
+- Separate modules by business capability, not by technical layer alone
+- Define ports/interfaces early so modules can evolve independently
+- Delay microservice extraction until module boundaries prove stable
+
+### If compliance, money, or critical workflows are involved:
+- Require explicit audit trail design
+- Require transaction and consistency rules for every write use case
+- Require authorization model and least-privilege boundaries
+- Require rollback and failure-mode documentation
 
 ## Templates
 
@@ -170,6 +229,24 @@ Present architecture overview and ask:
 - **Cache**: [Choice]
 - **Queue**: [Choice]
 
+## Engineering Rules
+- Controllers/handlers stay thin and transport-only
+- Use cases/services own business workflow and transaction boundaries
+- Repositories are ports or adapters, not business-rule containers
+- Domain logic does not depend on framework or ORM types
+- Cross-module access happens through explicit contracts
+
+## Module Boundaries
+| Module | Responsibility | Inbound Interface | Outbound Dependencies | Forbidden Dependencies |
+|--------|----------------|------------------|-----------------------|------------------------|
+| [Module] | [Reason to exist] | [HTTP / Queue / Cron] | [DB / Cache / Service] | [What it must not call] |
+
+## Operational Rules
+- Transaction boundaries: [List critical write flows]
+- Error taxonomy: [Domain, validation, infra, auth]
+- Observability: [Logs, metrics, tracing]
+- Idempotency: [Which operations must be safely retryable]
+
 ## Next Steps
 - [ ] Database schema design (use backend-db-design)
 - [ ] API endpoint design (use backend-api-design)
@@ -205,3 +282,5 @@ Present architecture overview and ask:
 - **Budget constraints**: Recommend cost-effective solutions (managed services, serverless)
 - **Team has no experience with recommended stack**: Factor in learning curve
 - **Greenfield project**: Start with monolith, plan for evolution
+- **Large framework temptation**: Prefer the simplest architecture that preserves boundaries and testability
+- **Microservice enthusiasm without clear boundaries**: Recommend modular monolith first and document extraction triggers

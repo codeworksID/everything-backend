@@ -28,6 +28,35 @@ Ask the user iteratively:
 Always confirm:
 - "Let me confirm: [entity list]. Did I miss any?"
 
+### Step 1.5: Data Modeling Rules (MANDATORY)
+
+Default to relational discipline unless the access pattern clearly requires otherwise.
+
+1. **Normalize by default**
+   - Start at 3NF for transactional systems
+   - Eliminate repeating groups (1NF)
+   - Eliminate partial dependencies on composite keys (2NF)
+   - Eliminate transitive dependencies and duplicated facts (3NF)
+   - Consider BCNF only when functional dependencies justify it
+
+2. **Model facts once**
+   - Each fact should have one canonical storage location
+   - Use junction tables for M:N relationships
+   - Avoid comma-separated lists, duplicated labels, and denormalized snapshots unless explicitly justified
+
+3. **Prefer constraints over convention**
+   - Encode integrity with PRIMARY KEY, FOREIGN KEY, UNIQUE, CHECK, NOT NULL
+   - Application validation complements the database; it does not replace it
+
+4. **Indexes follow query patterns**
+   - Define indexes from actual read patterns
+   - Justify composite index order
+   - Avoid indexing every column blindly
+
+5. **Denormalization is an exception**
+   - Only denormalize for measured read/performance needs
+   - Document the consistency mechanism (trigger, job, application update, materialized view)
+
 ### Step 2: Database Selection
 
 #### PostgreSQL
@@ -61,6 +90,18 @@ For each table, define:
 - Foreign keys and relationships
 - Indexes for query patterns
 - Constraints (NOT NULL, UNIQUE, CHECK)
+- Candidate keys and business keys
+- Delete/update behavior on foreign keys
+- Whether the table is in 3NF and why
+
+Before finalizing a relational schema, perform this normalization check:
+
+1. Is every column atomic?
+2. Does every non-key column depend on the whole key?
+3. Does any non-key column depend on another non-key column?
+4. Are derived/summary fields stored unnecessarily?
+5. Are lookup/reference tables needed?
+6. Are many-to-many relationships resolved through junction tables?
 
 ```sql
 CREATE TABLE users (
@@ -142,6 +183,24 @@ For each schema change:
 4. **Test migration** on staging
 5. **Plan rollback** strategy
 
+### Step 5.5: Transaction and Constraint Design
+
+For each write-heavy or critical workflow, define:
+
+1. **Transaction boundary**
+   - Which statements must succeed or fail together?
+   - Which side effects must happen outside the transaction?
+
+2. **Concurrency strategy**
+   - Optimistic locking, pessimistic locking, unique constraint enforcement, or idempotency key
+
+3. **Constraint strategy**
+   - Which rules are enforced by DB constraints?
+   - Which rules stay in application logic because they span multiple aggregates/tables?
+
+4. **Denormalization policy**
+   - If storing duplicated or computed data, document why and how it stays correct
+
 Example migration structure:
 ```
 migrations/
@@ -158,12 +217,15 @@ Present schema design:
 - List all tables/collections with key fields
 - Highlight important indexes
 - Explain normalization decisions
+- Explain candidate keys, foreign keys, and delete/update behavior
+- Explain transaction boundaries for critical write flows
 - Show migration plan
 
 Ask:
 - "Does this schema meet your needs?"
 - "Any missing fields or relationships?"
 - "Any normalization concerns?"
+- "Should any denormalization be justified for performance, or should we keep strict 3NF?"
 - "Should I save this to db-schema.md memory?"
 
 ## Decision Trees
@@ -187,6 +249,7 @@ Ask:
 - `payments`, `inventory`
 - Money: use decimal type, never float
 - Order status: pending, paid, shipped, delivered, cancelled
+- Require transaction boundaries for checkout, payment capture, and inventory reservation
 
 ### If real-time features needed:
 - Consider Redis for sessions
@@ -219,6 +282,43 @@ CREATE TABLE users (
 CREATE INDEX idx_users_email ON users(email);
 CREATE INDEX idx_users_status ON users(status) WHERE deleted_at IS NULL;
 CREATE INDEX idx_users_created_at ON users(created_at DESC);
+```
+
+### Normalization Review Template
+```markdown
+## Normalization Review
+
+### 1NF
+- [ ] No repeating groups or multi-value columns
+- [ ] Atomic column values only
+
+### 2NF
+- [ ] No partial dependency on part of a composite key
+- [ ] Junction tables contain only relationship-specific attributes
+
+### 3NF
+- [ ] No non-key column depends on another non-key column
+- [ ] Lookup/reference data extracted where appropriate
+- [ ] Derived data is not stored unless explicitly justified
+
+### Denormalization Exceptions
+- [ ] Any duplicated/computed data is documented
+- [ ] Refresh/consistency mechanism is defined
+```
+
+### Index Design Template
+```markdown
+## Index Strategy
+
+| Query Pattern | Columns Filtered/Sorted | Proposed Index | Why This Order |
+|---------------|--------------------------|----------------|----------------|
+| [Example] | [status, created_at] | `(status, created_at DESC)` | [Equality before range/sort] |
+
+Rules:
+- Index columns that appear in high-value filters, joins, uniqueness checks, and sort clauses
+- Prefer composite indexes that match real query order
+- Do not add speculative indexes without a read pattern
+- Revisit index cost for high-write tables
 ```
 
 ### MongoDB Schema Template
@@ -282,3 +382,5 @@ erDiagram
 - **Time-series data**: Consider TimescaleDB, InfluxDB
 - **Search-heavy**: Consider Elasticsearch, Meilisearch alongside primary DB
 - **Multi-tenant**: Add tenant_id to all tables, consider schema-per-tenant
+- **Premature denormalization**: Keep 3NF until measurement proves a bottleneck
+- **Cross-table business rule**: Enforce local invariants in DB constraints and cross-aggregate rules in application transactions

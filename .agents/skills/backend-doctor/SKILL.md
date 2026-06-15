@@ -26,29 +26,29 @@ Use `explore` agents to:
 
 ### Step 2: Code Quality Check
 
-#### Code Structure
-- [ ] Proper separation of concerns (controllers, services, repositories)
-- [ ] Consistent naming conventions
-- [ ] Proper error handling
-- [ ] Proper logging
-- [ ] No god objects/classes
-- [ ] Single responsibility principle
+Review code against these enforceable backend rules:
 
-#### Code Smells
-- [ ] Long functions (>50 lines)
-- [ ] Deep nesting (>3 levels)
-- [ ] Duplicate code
-- [ ] Magic numbers/strings
-- [ ] Dead code
-- [ ] Unused imports/variables
+#### Architecture and SOLID
+- [ ] Controllers/handlers are transport-only and thin
+- [ ] Services/use cases own business rules and orchestration
+- [ ] Repositories are persistence-only
+- [ ] Dependencies point inward toward business logic
+- [ ] Large classes/functions have one clear reason to change
+- [ ] Abstractions are small enough to be testable and replaceable
 
-#### Best Practices
-- [ ] Input validation on all endpoints
-- [ ] Output sanitization
-- [ ] Error handling with proper status codes
-- [ ] Security headers configured
-- [ ] CORS configured properly
-- [ ] Rate limiting in place
+#### Maintainability Signals
+- [ ] No god services coordinating unrelated business capabilities
+- [ ] No deep branching that should be polymorphism or strategy
+- [ ] No duplicate business rule logic across controllers/services
+- [ ] No framework types leaking into domain logic unless justified
+- [ ] No hidden side effects inside helpers or repositories
+
+#### Validation and Error Discipline
+- [ ] Input validation exists at transport boundaries
+- [ ] Business invariant validation exists in services/domain
+- [ ] DB constraints back critical persistence invariants
+- [ ] Errors are typed or categorized, not only generic 500s
+- [ ] Error mapping is consistent across endpoints
 
 ### Step 3: Security Check
 
@@ -92,14 +92,16 @@ Use `explore` agents to:
 
 ### Step 4: Performance Check
 
-#### Database Performance
-- [ ] No N+1 queries
-- [ ] Indexes on frequently queried columns
-- [ ] Query optimization (no SELECT *)
+#### Database Performance and Data Integrity
+- [ ] No N+1 queries on hot paths
+- [ ] Indexes match actual query and join patterns
+- [ ] Query optimization (no broad SELECT * on hot paths)
 - [ ] Connection pooling configured
 - [ ] Database query timeouts
 - [ ] Appropriate use of transactions
-- [ ] No missing indexes on foreign keys
+- [ ] No missing indexes on foreign keys and high-value filters
+- [ ] Schema appears normalized by default (3NF) unless denormalization is justified
+- [ ] Derived or duplicated fields have explicit consistency mechanisms
 
 #### API Performance
 - [ ] Response time acceptable
@@ -126,6 +128,18 @@ Use `explore` agents to:
 ### Step 5: Report Generation
 
 Generate a health report with overall score and detailed findings.
+
+Use evidence, not vibes:
+- Quote file paths and line ranges where possible
+- Explain why the issue violates a backend principle
+- Distinguish structural defects from style preferences
+
+### Step 5.5: Severity Rules
+
+- **Critical**: data loss risk, auth bypass, injection, broken transaction/invariant handling, secrets exposure
+- **High**: strong maintainability or integrity risk, e.g. god service, missing ownership checks, duplicated business rules in multiple endpoints
+- **Medium**: weak layering, missing tests on critical paths, weak index strategy, inconsistent error mapping
+- **Low**: naming, docs, minor duplication, non-critical observability gaps
 
 ### Step 6: User Confirmation
 
@@ -158,6 +172,7 @@ Present health report and ask:
 - Add missing tests
 - Add documentation
 - Update coding standards
+- Recommend explicit boundary fixes (controller → service → repository)
 
 ### If dependency issues found:
 - Update vulnerable packages
@@ -241,6 +256,36 @@ Present health report and ask:
 | Performance | B | Missing indexes, no caching |
 | Dependencies | A | All up to date |
 | Testing | C | Low test coverage |
+
+## Architecture Findings
+- **Layering**: [Good / Mixed / Poor]
+- **SOLID / SRP**: [Good / Mixed / Poor]
+- **Dependency Direction**: [Good / Mixed / Poor]
+- **Transaction Ownership**: [Good / Mixed / Poor]
+- **Normalization / Data Integrity**: [Good / Mixed / Poor]
+```
+
+### Structural Review Template
+```markdown
+## Structural Review
+
+### Controller / Handler
+- Are controllers thin and transport-focused?
+- Do they avoid business branching, raw SQL, and transaction ownership?
+
+### Service / Use Case
+- Does each service have one cohesive responsibility?
+- Are business rules centralized instead of duplicated across endpoints?
+- Are transactions owned here when multiple writes must succeed together?
+
+### Repository / Persistence
+- Do repositories avoid business decisions and external side effects?
+- Are query methods aligned with use cases instead of generic catch-all methods?
+
+### Domain / Data Integrity
+- Are invariants explicit?
+- Does the schema appear normalized by default?
+- Are denormalized fields justified and maintained safely?
 ```
 
 ### Security Checklist Template
@@ -296,6 +341,8 @@ Present health report and ask:
 - [ ] Connection pooling
 - [ ] Query result limits
 - [ ] Appropriate use of transactions
+- [ ] 3NF by default unless documented denormalization exists
+- [ ] Composite indexes match actual filter/sort order
 
 ### API
 - [ ] Response time < 200ms
@@ -326,3 +373,4 @@ Present health report and ask:
 - **Multiple languages**: Check each separately, compare against language-specific best practices
 - **No memory files**: Suggest running `backend-discovery` to get context
 - **Third-party dependencies**: Note as external risk, recommend dependency scanning
+- **Pattern mismatch across modules**: Flag inconsistency if some modules are layered correctly and others bypass boundaries
