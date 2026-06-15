@@ -1,5 +1,10 @@
 # everything-backend
 
+> **Languages / Bahasa / Idiomas / 语言 / 言語:**
+> [English](README.md) · [Bahasa Indonesia](README.id.md) · [Español](README.es.md) · [中文](README.zh.md) · [日本語](README.ja.md)
+
+> **Open for contributions!** Issues, pull requests, and translations are all welcome. See the [Issues](../../issues) and [Pull Requests](../../pulls) tabs to get started.
+
 Reusable Opencode backend skills covering project discovery, architecture, database design, API design, implementation, testing, auth, operations, deployment, migrations, visualization, health checks, and memory refresh.
 
 ## Included skills
