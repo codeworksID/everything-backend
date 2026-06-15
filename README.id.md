@@ -4,6 +4,8 @@
 > [English](README.md) · [Bahasa Indonesia](README.id.md) · [Español](README.es.md) · [中文](README.zh.md) · [日本語](README.ja.md)
 
 > **Terbuka untuk kontribusi!** Issue, pull request, dan terjemahan semuanya diterima. Lihat tab [Issues](../../issues) dan [Pull Requests](../../pulls) untuk memulai.
+>
+> [![GitHub issues](https://img.shields.io/github/issues/codeworksID/everything-backend)](../../issues) [![good first issue](https://img.shields.io/github/issues/codeworksID/everything-backend/good%20first%20issue?color=7057ff&label=good%20first%20issue)](../../issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22) [![help wanted](https://img.shields.io/github/issues/codeworksID/everything-backend/help%20wanted?color=008672&label=help%20wanted)](../../issues?q=is%3Aopen+is%3Aissue+label%3A%22help+wanted%22)
 
 Skill backend Opencode yang dapat digunakan kembali, mencakup penemuan proyek, arsitektur, desain basis data, desain API, implementasi, pengujian, autentikasi, operasi, deployment, migrasi, visualisasi, pemeriksaan kesehatan, dan penyegaran memori.
 

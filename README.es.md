@@ -4,6 +4,8 @@
 > [English](README.md) · [Bahasa Indonesia](README.id.md) · [Español](README.es.md) · [中文](README.zh.md) · [日本語](README.ja.md)
 
 > **¡Abierto a contribuciones!** Issues, pull requests y traducciones son bienvenidos. Visita las pestañas de [Issues](../../issues) y [Pull Requests](../../pulls) para comenzar.
+>
+> [![GitHub issues](https://img.shields.io/github/issues/codeworksID/everything-backend)](../../issues) [![good first issue](https://img.shields.io/github/issues/codeworksID/everything-backend/good%20first%20issue?color=7057ff&label=good%20first%20issue)](../../issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22) [![help wanted](https://img.shields.io/github/issues/codeworksID/everything-backend/help%20wanted?color=008672&label=help%20wanted)](../../issues?q=is%3Aopen+is%3Aissue+label%3A%22help+wanted%22)
 
 Skills de backend de Opencode reutilizables que cubren descubrimiento de proyectos, arquitectura, diseño de bases de datos, diseño de API, implementación, pruebas, autenticación, operaciones, despliegue, migraciones, visualización, chequeos de salud y actualización de memoria.
 

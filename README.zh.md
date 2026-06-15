@@ -4,6 +4,8 @@
 > [English](README.md) · [Bahasa Indonesia](README.id.md) · [Español](README.es.md) · [中文](README.zh.md) · [日本語](README.ja.md)
 
 > **欢迎贡献！** 欢迎提交 Issue、Pull Request 以及翻译。请查看 [Issues](../../issues) 和 [Pull Requests](../../pulls) 选项卡开始参与。
+>
+> [![GitHub issues](https://img.shields.io/github/issues/codeworksID/everything-backend)](../../issues) [![good first issue](https://img.shields.io/github/issues/codeworksID/everything-backend/good%20first%20issue?color=7057ff&label=good%20first%20issue)](../../issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22) [![help wanted](https://img.shields.io/github/issues/codeworksID/everything-backend/help%20wanted?color=008672&label=help%20wanted)](../../issues?q=is%3Aopen+is%3Aissue+label%3A%22help+wanted%22)
 
 可复用的 Opencode 后端技能集合，涵盖项目发现、架构设计、数据库设计、API 设计、代码实现、测试、身份认证、运维、部署、迁移、可视化、健康检查以及记忆刷新。
 
