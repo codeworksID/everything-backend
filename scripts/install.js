@@ -43,7 +43,40 @@ Options:
   --dry-run        Show planned file operations without writing
   --force          Overwrite an already-installed skill directory
   --target <path>  Custom destination for installed skills (bypasses interactive prompts)
+  --version, -v    Print version and exit
+  --update         Print self-update instructions and exit
   --help           Show this message
+`);
+}
+
+function getPackageVersion() {
+  try {
+    const pkg = require(path.join(__dirname, "..", "package.json"));
+    return pkg.version;
+  } catch (err) {
+    return "unknown";
+  }
+}
+
+function printVersion() {
+  console.log(`everything-backend v${getPackageVersion()}`);
+}
+
+function printUpdateInstructions() {
+  console.log(`everything-backend v${getPackageVersion()}
+
+To update everything-backend to the latest version:
+
+  npx -y everything-backend@latest
+
+That will re-run the installer with the newest published version.
+If you installed it globally, you can also run:
+
+  npm update -g everything-backend
+
+Then re-run this installer to refresh your skills:
+
+  npx everything-backend --force --target <path>
 `);
 }
 
@@ -128,6 +161,16 @@ function parseArgs(argv) {
       continue;
     }
 
+    if (arg === "--version" || arg === "-v") {
+      options.version = true;
+      continue;
+    }
+
+    if (arg === "--update") {
+      options.update = true;
+      continue;
+    }
+
     if (arg === "--dry-run") {
       options.dryRun = true;
       continue;
@@ -181,6 +224,16 @@ async function main() {
   const options = parseArgs(args);
   if (options.help) {
     printHelp();
+    return;
+  }
+
+  if (options.version) {
+    printVersion();
+    return;
+  }
+
+  if (options.update) {
+    printUpdateInstructions();
     return;
   }
 
