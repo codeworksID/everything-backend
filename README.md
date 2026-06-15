@@ -21,49 +21,45 @@ Shared reference files live in `.agents/skills/_shared/` and are included in the
 
 ## Installation
 
-### Option 1: Install with `npx` from GitHub
+Run the installer using `npx`:
 
 ```bash
-npx github:codeworksID/everything-backend
+npx everything-backend
 ```
 
-That command runs the included installer and copies the skills into your global Opencode skills directory:
+The installer will run interactively and prompt you to choose:
+1. **Global** — Installs the skills as a global IDE/app plugin. You will be asked which app to target:
+   - **Gemini IDE** — `~/.gemini/config/plugins/everything-backend-plugin`
+   - **Cursor** — `~/.cursor/skills-cursor`
+   - **Opencode / generic** — `~/.agents/skills`
+2. **Per-project** — Asks for your project's directory path and installs the skills locally inside `<project-path>/.agents/skills/`.
 
-- Windows: `%USERPROFILE%\.agents\skills`
-- macOS / Linux: `~/.agents/skills`
+### Alternative / Manual installation
 
-### Option 2: Clone and install locally
-
+If you prefer to clone and install locally:
 ```bash
 git clone https://github.com/codeworksID/everything-backend.git
 cd everything-backend
 node scripts/install.js
 ```
 
-### Option 3: Package form after publishing to npm
+### Advanced Options
+
+You can bypass the interactive prompts by specifying a `--target` path:
 
 ```bash
-npx everything-backend-opencode-skills
+npx everything-backend --target /path/to/project/.agents/skills
 ```
 
-## Installer options
-
-```bash
-node scripts/install.js --help
-```
-
-Available flags:
-
+#### Available flags:
 - `--dry-run` — show what would be copied without writing files
 - `--force` — overwrite existing installed skills
-- `--target <path>` — install to a custom skills directory
+- `--target <path>` — custom destination path (bypasses interactive prompt)
 
-Examples:
-
+#### Examples:
 ```bash
 node scripts/install.js --dry-run
-node scripts/install.js --force
-node scripts/install.js --target "C:\Users\you\.agents\skills"
+node scripts/install.js --target "C:\Users\you\Documents\GitHub\my-project\.agents\skills"
 ```
 
 ## What gets installed

@@ -1,6 +1,6 @@
 {
-  "name": "everything-backend-opencode-skills",
-  "version": "0.1.0",
+  "name": "everything-backend",
+  "version": "0.2.4",
   "description": "Reusable Opencode backend skills with an installable CLI.",
   "license": "MIT",
   "repository": {
@@ -19,7 +19,7 @@
     "npx"
   ],
   "bin": {
-    "everything-backend-skills": "scripts/install.js"
+    "everything-backend": "scripts/install.js"
   },
   "files": [
     ".agents/skills",
@@ -27,6 +27,7 @@
     "README.md"
   ],
   "scripts": {
+    "postinstall": "node ./scripts/install.js",
     "install:skills": "node ./scripts/install.js",
     "install:skills:dry": "node ./scripts/install.js --dry-run"
   },
