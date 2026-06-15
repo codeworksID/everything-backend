@@ -112,26 +112,18 @@ Choose the right Mermaid syntax for the selected diagram type. Follow the templa
 
 ### 1. ERD (Entity-Relationship Diagram)
 
-Use `erDiagram` syntax.
+Use `erDiagram` syntax. Note: `erDiagram` does **not** support `subgraph` blocks — use color-coded `classDef` and `class` assignments to group entities by bounded context instead.
 
 ```mermaid
 erDiagram
-    subgraph Authentication["🔐 Authentication"]
-        USERS
-        ROLES
-    end
-
-    subgraph Content["📝 Content"]
-        POSTS
-        CATEGORIES
-        COMMENTS
-    end
-
+    %% 🔐 Authentication
     USERS ||--o{ POSTS : writes
     USERS ||--o{ COMMENTS : writes
+    USERS }o--o{ ROLES : has
+
+    %% 📝 Content
     POSTS ||--o{ COMMENTS : has
     CATEGORIES ||--o{ POSTS : contains
-    USERS }o--o{ ROLES : has
 
     USERS {
         uuid id PK
@@ -173,19 +165,42 @@ erDiagram
         text content
         timestamp created_at
     }
+
+    %% Per-group classDefs (semantic, not shape-based)
+    %% NOTE: erDiagram does NOT use semicolons after classDef/class statements.
+    classDef auth fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,color:#000
+    classDef content fill:#e1f5fe,stroke:#01579b,stroke-width:2px,color:#000
+    classDef boundary fill:#fffde7,stroke:#f57f17,stroke-width:2px,color:#000
+
+    class USERS,ROLES auth
+    class POSTS,COMMENTS content
+    class CATEGORIES boundary
 ```
 
 ERD rules:
-- Use `PK`, `FK`, `UK` annotations.
-- Group entities by bounded context in subgraphs.
+- **Do not use `subgraph` in `erDiagram`** — Mermaid silently fails to parse them, leaking the directive text into the output. Group entities with `%% 🔐 Authentication` comment headers + matching `classDef`/`class` assignments instead.
+- Use `PK`, `FK`, `UK` annotations on every relevant column.
+- **`erDiagram` does NOT use semicolons** after `classDef` or `class` statements. Using `;` causes a parse error. Write:
+  ```mermaid
+  classDef auth fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,color:#000
+  class USERS,ROLES auth
+  ```
+- **Per-group classDefs** named by semantic role (`auth`, `content`, `boundary`) and applied via a single `class A,B,C <name>` line per group. `erDiagram` supports the comma-separated multi-node form here.
 - Show cardinalities explicitly (`||--o{`, `}o--o{`, etc.).
 - Keep relationship labels short and verb-based.
+- For fan-out relationships (one source → many targets), write each relationship on its own line — `erDiagram` does **not** support the `&` chaining operator. Example:
+  ```mermaid
+  USERS ||--o{ POSTS : writes
+  USERS ||--o{ COMMENTS : writes
+  USERS ||--o{ LIKES : writes
+  ```
+- Keep each bounded context to 3–7 entities. If a context exceeds 7, split into a focused per-context ERD.
 
 ---
 
 ### 2. Class Diagram
 
-Use `classDiagram` syntax.
+Use `classDiagram` syntax. `classDiagram` supports `namespace` blocks (not `subgraph`) and does **not** support the `&` chaining operator — write each association on its own line.
 
 ```mermaid
 classDiagram
@@ -231,123 +246,226 @@ classDiagram
     User "1" --> "*" Comment : writes
     Post "1" --> "*" Comment : has
     Post "*" --> "1" Category : belongs to
+
+    %% Per-group classDefs (semantic, not shape-based)
+    %% NOTE: classDiagram requires NO semicolons AND one class assignment per line.
+    classDef auth fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,color:#000
+    classDef content fill:#e1f5fe,stroke:#01579b,stroke-width:2px,color:#000
+
+    class User auth
+    class Post content
+    class Category content
+    class Comment content
 ```
 
 Class diagram rules:
-- Group related classes in `namespace` blocks.
+- Group related classes in `namespace` blocks. **Namespace labels can use emoji + Title Case** for visual grouping in editors that render the label (e.g., `namespace 🔐Auth`, `namespace 📝Content`).
+  ```mermaid
+  classDiagram
+      namespace 🔐Auth {
+          class User
+          class Role
+      }
+      namespace 📝Content {
+          class Post
+          class Category
+          class Comment
+      }
+  ```
 - Show visibility (`+`, `-`, `#`) for public/private/protected members.
-- Label associations with cardinality and role.
-- Color classes by type using `classDef` from the theme.
-
-Example with namespaces:
-
-```mermaid
-classDiagram
-    namespace Auth {
-        class User
-        class Role
-    }
-    namespace Content {
-        class Post
-        class Category
-        class Comment
-    }
-```
+- Label associations with cardinality and role: `ClassA "1" --> "*" ClassB : verb`.
+- **No `&` chaining in `classDiagram`** — write each association on its own line:
+  ```mermaid
+  User "1" --> "*" Post : writes
+  User "1" --> "*" Comment : writes
+  User "1" --> "*" Like : writes
+  ```
+- **Custom `classDef` per group**, named by semantic role. Use a single `class A,B,C <name>;` line per group to apply colors.
 
 ---
 
 ### 3. User / Actor Diagram
 
-Use `graph LR` or `graph TD` with actor nodes.
+Use `graph TD` with layered subgraphs, mixed node shapes, and `&` chaining.
 
 ```mermaid
-graph LR
-    subgraph External["🌐 External Actors"]
+graph TD
+    subgraph AuthLayer["🔐 Authentication Boundary"]
         Guest((Guest))
-        User((User))
-        Admin((Admin))
+        StaffLogin[/ /login/ /]
+        PortalLogin[/ /portal/login/ /]
+        JWT{{NextAuth Session<br/>Role + Permissions Payload}}
     end
 
-    subgraph System["⚙️ System"]
-        API[API Gateway]
-        AuthService[Auth Service]
-        ContentService[Content Service]
+    subgraph Roles["👥 Resolved Context (Roles)"]
+        SuperAdmin([Super Admin])
+        StaffFinance([Finance Staff])
+        StaffPM([Project Mgmt])
+        StaffAdmin([Administrative])
+        ClientActor([Client])
     end
 
-    subgraph Data["💾 Data Stores"]
-        DB[(Database)]
-        Cache[(Cache)]
+    subgraph AppModules["⚙️ Internal App Modules"]
+        Dashboard[Dashboard]
+        Finance[Finance · Tax]
+        Projects[Projects · Tasks]
+        Inventory[Inventory · Stock]
+        Documents[Documents · Versions]
+        Vendors[Vendors · POs]
+        Clients[Clients CRM]
+        Employees[Employees · HR]
+        Performance[Performance KPIs]
+        Settings[Settings · Role Matrix]
+        Log[Audit Log]
     end
 
-    Guest -->|register / login| API
-    User -->|browse / create posts| API
-    Admin -->|manage users / moderate| API
-    API --> AuthService
-    API --> ContentService
-    AuthService --> DB
-    ContentService --> DB
-    ContentService --> Cache
+    subgraph PortalApp["🌐 Client Portal"]
+        PortalDash[Portal Dashboard]
+        PortalProject[Read-only Project]
+    end
 
-    classDef actor fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000;
-    classDef service fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#000;
-    classDef database fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,color:#000;
+    Guest -->|Internal Auth| StaffLogin
+    Guest -->|Client Auth| PortalLogin
+    StaffLogin --> JWT
+    PortalLogin --> JWT
 
-    class Guest,User,Admin actor;
-    class API,AuthService,ContentService service;
-    class DB,Cache database;
+    JWT -.->|Evaluates Role| SuperAdmin
+    JWT -.->|Evaluates Role| StaffFinance
+    JWT -.->|Evaluates Role| StaffPM
+    JWT -.->|Evaluates Role| StaffAdmin
+    JWT -.->|Evaluates Role| ClientActor
+
+    %% Access Mapping
+    SuperAdmin ==>|Full Access| Dashboard & Finance & Projects & Inventory & Documents & Vendors & Clients & Employees & Performance & Settings & Log
+    StaffFinance -->|Finance Scope| Dashboard & Finance & Projects & Vendors
+    StaffPM -->|PM Scope| Dashboard & Projects & Inventory & Documents & Vendors & Performance
+    StaffAdmin -->|Admin Scope| Dashboard & Projects & Documents & Clients & Employees & Vendors
+    ClientActor -->|External Scope| PortalDash & PortalProject
+
+    classDef auth fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,color:#000;
+    classDef role fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000;
+    classDef module fill:#e1f5fe,stroke:#01579b,stroke-width:2px,color:#000;
+    classDef portal fill:#fffde7,stroke:#f57f17,stroke-width:2px,color:#000;
+
+    class Guest,StaffLogin,PortalLogin,JWT auth;
+    class SuperAdmin,StaffFinance,StaffPM,StaffAdmin,ClientActor role;
+    class Dashboard,Finance,Projects,Inventory,Documents,Vendors,Clients,Employees,Performance,Settings,Log module;
+    class PortalDash,PortalProject portal;
 ```
 
 User/actor diagram rules:
-- Use `((Actor))` or `[Role]` shapes for users.
-- Show what each actor can do with labeled arrows.
-- Group by external actors, system, and data stores.
-- Use the actor color for all user/role nodes.
+- Direction: `graph TD` (top-down) is the default for layered systems. Use `graph LR` only for linear flows with few layers.
+- **Node shapes carry meaning** — pick the shape that fits the role:
+  - `((Label))` — external/circular actor (Guest, Client, external user)
+  - `[/Label/]` — input/entry route or form (login pages, signup endpoints)
+  - `{{Label}}` — decision/transformation node (auth session, evaluator, middleware)
+  - `([Label])` — resolved role/context (a role, a tenant, a resolved identity)
+  - `[Label]` — internal app module, page, or service
+  - `[(Label)]` — data store (database, cache, queue)
+- **Subgraph labels use emoji + Title Case**: e.g., `🔐 Authentication Boundary`, `👥 Resolved Context (Roles)`, `⚙️ Internal App Modules`, `🌐 Client Portal`.
+- **Use `&` chaining to fan out from one source to many targets** in a single statement (one node → many modules). This is the canonical way to show "role X has access to modules A, B, C, ..." without repeating the source on every line.
+  - **Critical syntax rule**: the `&` chain MUST stay on a single line. Do not break it across lines — Mermaid parses `&` chains per-line, and a line break mid-chain causes a parse error.
+  - Each target in the chain must be a defined node id (no inline shapes inside the chain).
+- **Edge styles carry meaning**:
+  - `-->` solid arrow: direct flow / dependency
+  - `-.->` dotted arrow: evaluation / resolution / lookup
+  - `==>` thick arrow: high-privilege or full-access mapping
+  - `-->|label|` : always label arrows; the label says *what* the relationship is
+- **Group semantically, not just structurally**:
+  - Authentication boundary (entry points, session, identity)
+  - Resolved context (roles, tenants, identities)
+  - Internal app modules (features the system owns)
+  - External/portal apps (separate surfaces, even if same backend)
+- **Custom `classDef` per group**, not per the global theme. Name classDefs by their semantic role (`auth`, `role`, `module`, `portal`) and map nodes to the class that matches their group, not their shape.
+- Keep each subgraph to 3–7 items when possible. If a module list exceeds 7, split into a second diagram or use a collapsed "Other modules" node.
 
 ---
 
 ### 4. Flowchart
 
-Use `graph TD` or `graph LR` syntax.
+Use `graph TD` with semantic subgraphs, mixed node shapes, and `&` chaining for fan-out.
 
 ```mermaid
 graph TD
-    Start([User submits post]) --> Validate{Valid?}
-    Validate -->|No| Reject[Return validation errors]
+    subgraph Entry["🚪 Entry"]
+        Start([User submits post])
+    end
+
+    subgraph Validation["✅ Validation"]
+        Validate{Valid?}
+        Reject[Return validation errors]
+    end
+
+    subgraph Drafting["📝 Drafting"]
+        Save[Save draft post]
+        Publish{Publish now?}
+        Draft[Mark as draft]
+    end
+
+    subgraph Moderation["🛡️ Moderation"]
+        CheckModeration{Needs moderation?}
+        Queue[Queue for review]
+        Approve{Approved?}
+        Rejected[Reject post]
+    end
+
+    subgraph Publish["🚀 Publish"]
+        Live[Publish post]
+        Notify[Notify subscribers]
+    end
+
+    subgraph Exit["🏁 Exit"]
+        EndProc([End])
+    end
+
+    Start --> Validate
+    Validate -->|No| Reject
     Reject --> Start
-    Validate -->|Yes| Save[Save draft post]
-    Save --> Publish{Publish now?}
-    Publish -->|No| Draft[Mark as draft]
-    Publish -->|Yes| CheckModeration{Needs moderation?}
-    CheckModeration -->|Yes| Queue[Queue for review]
-    CheckModeration -->|No| Live[Publish post]
-    Queue --> Approve{Approved?}
+    Validate -->|Yes| Save
+    Save --> Publish
+    Publish -->|No| Draft
+    Publish -->|Yes| CheckModeration
+    CheckModeration -->|No| Live
+    CheckModeration -->|Yes| Queue
+    Queue --> Approve
     Approve -->|Yes| Live
-    Approve -->|No| Rejected[Reject post]
-    Live --> Notify[Notify subscribers]
-    Draft --> EndProc([End])
+    Approve -->|No| Rejected
+    Live --> Notify
+    Draft --> EndProc
     Rejected --> EndProc
     Notify --> EndProc
 
     classDef process fill:#e0f2f1,stroke:#00695c,stroke-width:2px,color:#000;
     classDef decision fill:#fce4ec,stroke:#c2185b,stroke-width:2px,color:#000;
     classDef startend fill:#e1f5fe,stroke:#01579b,stroke-width:2px,color:#000;
+    classDef reject fill:#ffebee,stroke:#c62828,stroke-width:2px,color:#000;
 
     class Start,EndProc startend;
     class Validate,Publish,CheckModeration,Approve decision;
-    class Save,Reject,Draft,Queue,Live,Rejected,Notify process;
+    class Save,Draft,Queue,Live,Notify process;
+    class Reject,Rejected reject;
 ```
 
 Flowchart rules:
-- Use `([Start/End])` for terminal nodes.
-- Use `{Decision}` for decision diamonds.
-- Label every outgoing arrow with the condition/trigger.
+- **Node shapes carry meaning**:
+  - `([Label])` — terminal (start/end)
+  - `{Label}` — decision diamond
+  - `[Label]` — process step
+- **Subgraph labels use emoji + Title Case** for visual phases: `🚪 Entry`, `✅ Validation`, `📝 Drafting`, `🛡️ Moderation`, `🚀 Publish`, `🏁 Exit`.
+- **Use `&` chaining to fan out from one source to many targets** in a single statement (e.g., one moderator action → multiple notify targets). The chain **must stay on one line** — Mermaid parses `&` per line.
+  ```mermaid
+  Notify ==>|fans out| Email & Push & Webhook & InApp
+  ```
+  If the chain gets long, split the *source* (one statement per source) rather than the chain itself.
+- Label every outgoing arrow with the condition/trigger: `-->|Yes|`, `-->|No|`, `-->|timeout|`.
 - Keep the happy path left-to-right or top-to-bottom.
+- **Custom `classDef` per phase**, named by semantic role. Use a single `class A,B,C <name>;` line per phase to apply colors.
 
 ---
 
 ### 5. Sequence Diagram
 
-Use `sequenceDiagram` syntax.
+Use `sequenceDiagram` syntax with `rect` blocks for phased grouping.
 
 ```mermaid
 sequenceDiagram
@@ -360,35 +478,52 @@ sequenceDiagram
     participant D as Database
     participant Ca as Cache
 
-    U->>C: Submit post
-    C->>G: POST /posts
-    G->>A: Validate token
-    A-->>G: User claims
-    G->>S: Create post
-    S->>Ca: Check category cache
-    Ca-->>S: Cache miss
-    S->>D: SELECT category
-    D-->>S: Category row
-    S->>D: INSERT post
-    D-->>S: Post row
-    S->>Ca: Invalidate post list
-    S-->>G: Post created
-    G-->>C: 201 Created
-    C-->>U: Show success
+    rect rgb(243, 229, 245)
+        Note over U,G: 🔐 Auth Phase
+        U->>C: Submit post
+        C->>G: POST /posts
+        G->>A: Validate token
+        A-->>G: User claims
+    end
+
+    rect rgb(225, 245, 254)
+        Note over G,Ca: ⚙️ Content Phase
+        G->>S: Create post
+        S->>Ca: Check category cache
+        Ca-->>S: Cache miss
+        S->>D: SELECT category
+        D-->>S: Category row
+    end
+
+    rect rgb(232, 245, 233)
+        Note over S,Ca: 💾 Persistence Phase
+        S->>D: INSERT post
+        D-->>S: Post row
+        S->>Ca: Invalidate post list
+    end
+
+    rect rgb(255, 253, 231)
+        Note over G,U: 🚀 Response Phase
+        S-->>G: Post created
+        G-->>C: 201 Created
+        C-->>U: Show success
+    end
 ```
 
 Sequence diagram rules:
-- Use `actor` for human participants.
-- Use short, descriptive participant aliases.
+- Use `actor` for human participants; use `participant` for systems/services.
+- Use short, descriptive participant aliases (`A` for Auth, `S` for Service, `D` for DB, `Ca` for Cache).
 - Number important steps with `autonumber`.
-- Group related interactions visually with `rect` blocks if needed.
-- Show synchronous calls as solid arrows, returns as dashed.
+- **Group related interactions with `rect rgb(R, G, B)` blocks**. Use a `Note over ... : 🔐 Phase Name` line as the first thing inside each `rect` to label the phase. The `rgb()` color should roughly match the `classDef` color used elsewhere in the project for that phase (e.g., purple `243,229,245` for auth, blue `225,245,254` for content, green `232,245,233` for persistence, yellow `255,253,231` for response).
+- **No `&` chaining in `sequenceDiagram`** — each message is its own line: `A->>B: msg`, `B-->>A: reply`.
+- Show synchronous calls as solid arrows (`->>`), returns as dashed (`-->>`). Self-messages use `A->>A: msg` with a small loop.
+- The `Note over X,Y:` line is the canonical way to add a label inside a `rect` block — it does not count as a message and does not advance `autonumber`.
 
 ---
 
 ### 6. Architecture Diagram
 
-Use `graph TD` or `graph LR` syntax.
+Use `graph TD` syntax with layered subgraphs and `&` chaining for fan-out.
 
 ```mermaid
 graph TD
@@ -427,8 +562,7 @@ graph TD
     Admin --> GW
     CDN --> LB
     LB --> GW
-    GW --> Auth
-    GW --> Content
+    GW ==>|routes| Auth & Content & Notification
     Content --> Notification
     Auth --> DB
     Content --> DB
@@ -453,9 +587,12 @@ graph TD
 
 Architecture diagram rules:
 - Group by logical layers (Clients, Edge, Services, Data, External).
-- Show directional data flow with arrows.
-- Use dashed borders for external/third-party components.
+- **Subgraph labels use emoji + Title Case**: `💻 Clients`, `🌐 Edge / Gateway`, `🧩 Services`, `💾 Data`, `🔌 External`.
+- Show directional data flow with arrows. Use `==>|label|` for high-throughput or privileged paths (gateway routing, fan-out) and `-->` for standard flow.
+- Use `&` chaining to express one source fanning out to multiple targets on a single line — but **never break a chain across lines**.
+- Use dashed borders (`stroke-dasharray: 5 5`) for external/third-party components.
 - Label critical connections if the relationship is not obvious.
+- **Custom `classDef` per layer**, named by semantic role (`client`, `edge`, `service`, `database`, `external`).
 
 ---
 
@@ -518,6 +655,30 @@ For each diagram, explain briefly why it is useful. Do not overwhelm the user; i
 - **Mermaid rendering issues**: Simplify the diagram, reduce node count, or split subgraphs. Avoid deeply nested subgraphs.
 - **Conflicting visual conventions**: Always prefer this skill's theme. If the project has existing diagrams, match their style after confirming with the user.
 - **Diagram becomes too wide**: Switch direction from `LR` to `TD`, or split into linked diagrams.
+- **`&` chaining syntax error**: Mermaid parses `&` chains **per line**. A chain like:
+  ```mermaid
+  Role ==>|scope| A & B
+      & C & D
+  ```
+  is invalid — the second line starts with `&` outside a statement and breaks the parser. Keep the entire chain on **one line**:
+  ```mermaid
+  Role ==>|scope| A & B & C & D
+  ```
+  If a chain gets too long, split the *source* (one statement per source) rather than the chain.
+- **Unknown node in chain**: Every id in a `&` chain must be declared as a node earlier in the diagram. If you see `Expecting 'PS', 'PE', ...` errors after a chain, check that every chained id is defined.
+- **`&` is only for `graph`/`flowchart`**: It does **not** work in `erDiagram`, `classDiagram`, `sequenceDiagram`, or `stateDiagram`. In those, write one statement per source/target pair.
+- **Semicolons in `erDiagram`/`classDiagram`**: Unlike `graph`/`flowchart`, neither `erDiagram` nor `classDiagram` accept semicolons after `classDef` or `class` statements. Using `;` produces a parse error like `Expecting 'EOF', 'SPACE', ... got ';'`. Always write:
+  ```mermaid
+  classDef auth fill:#f9f,stroke:#333,stroke-width:4px
+  class User auth
+  ```
+  not `class User auth;`.
+- **Multi-node `class A,B,C name` only in some diagrams**: `erDiagram` and `graph`/`flowchart` accept comma-separated multi-node class assignments (`class A,B,C name`). `classDiagram` does **not** — it requires one statement per node:
+  ```mermaid
+  class A name
+  class B name
+  class C name
+  ```
 
 ---
 
