@@ -19,10 +19,16 @@ description: "Turn backend designs into code or evolve existing code. Supports N
 Before generating or modifying code, confirm the following machine-checkable conditions:
 
 - REQUIRED: Project root is confirmed and accessible.
+  - Check: `bash -c 'test -d src || test -d app || test -d internal || test -d lib'`
+  - If missing: stop and ask the user for the correct project path
 - REQUIRED: `tech-stack.md` exists or the tech stack can be inferred from project files.
+  - Check: `glob .opencode/everything-backend-memory/tech-stack.md`; if empty, fall back to `bash -c 'ls package.json pyproject.toml go.mod pom.xml build.gradle 2>/dev/null | head -1'`
+  - If missing: stop and ask the user for the project path that contains a known manifest, or run `backend-scan` to populate memory
 - RECOMMENDED: `api-patterns.md` and `db-schema.md` are available for the feature being implemented.
+  - Check: `glob .opencode/everything-backend-memory/api-patterns.md` and `glob .opencode/everything-backend-memory/db-schema.md`
+  - If missing: run `backend-api-design` and/or `backend-db-design` to produce the missing design, or proceed with the existing design context the user provides
 
-If the design is missing, run `backend-api-design` and/or `backend-db-design` first.
+If any REQUIRED Check fails, run `backend-scan` with `mode=auto`, then re-run these checks. If the missing file is a project file (e.g., manifest, source dir) that `backend-scan` cannot create, stop and ask the user.
 
 ## Required Context
 
@@ -60,16 +66,54 @@ Apply the code/architecture, API, system, and security principles in `_shared/pr
 
 ### Post-Generation Checklist
 
-After generating or modifying code, verify the following against `_shared/principles.md`:
+After generating or modifying code, run each check below. A run is "clean" only when every Check command exits 0 and every Pass condition holds.
 
-- [ ] Controllers/handlers contain no business logic (thin transport layer).
-- [ ] Services own transaction boundaries for multi-write flows (ACID transactions).
-- [ ] No raw SQL string concatenation; use parameterized queries or ORM equivalents (input validation/sanitization).
-- [ ] All endpoints have validation schemas at the boundary (validation at boundary).
-- [ ] Domain logic does not depend on HTTP, ORM, queue, or framework details.
-- [ ] Errors are typed and mapped centrally to responses.
+#### 1. Controllers contain no business logic
+- Check: `grep -nE "if|switch|for|while" src/controllers/ src/handlers/ 2>/dev/null | grep -v "validate\|parse\|format\|map\|next()"`
+- Pass condition: no output, OR output is limited to input validation and response shaping.
+- If failed: move the business branch into a service method; controller should only call `service.<action>(dto)` and map the result/error.
 
-Verify using `lsp_diagnostics` and `grep`; do not rely on self-review alone.
+#### 2. Services own transaction boundaries
+- Check: `grep -nE "BEGIN|COMMIT|ROLLBACK|transaction" src/services/ -r 2>/dev/null`
+- Pass condition: transaction markers appear in service files, never in controllers.
+- If failed: open the transaction in the service method; controllers must never start or commit transactions.
+
+#### 3. No raw SQL concatenation
+- Check: `grep -nE "SELECT|INSERT|UPDATE|DELETE" src/ -r 2>/dev/null | grep -E "\\$\\{|\\%s|\\+.*['\"]"`
+- Pass condition: zero matches.
+- If failed: replace string interpolation with parameterized queries (`$1`, `?`, or ORM equivalents).
+
+#### 4. All endpoints have validation schemas
+- Check: `grep -nE "router\.(get|post|put|patch|delete)|@(Get|Post|Put|Patch|Delete)|app\.(get|post|put|patch|delete)" src/ -r 2>/dev/null`
+  For each matched line, also `grep -nE "zod|joi|yup|pydantic|class-validator|validate" <file>`.
+- Pass condition: every route line has a validation reference in the same file or an imported schema.
+- If failed: add a Zod/Joi/Pydantic schema at the route boundary and parse input before calling the service.
+
+#### 5. Domain logic does not depend on framework details
+- Check: `grep -nE "import .* from ['\"](express|fastify|@nestjs|koa|gin|spring)|@Controller|@RestController|@RequestMapping" src/domain/ src/services/ 2>/dev/null`
+- Pass condition: zero matches.
+- If failed: move the framework-typed code into an application/transport layer; keep `src/domain/` and `src/services/` framework-agnostic.
+
+#### 6. Errors are typed and mapped centrally
+- Check: `grep -nE "res\.status\(5\)|raise Exception\(|throw new Error\(['\"]" src/ -r 2>/dev/null`
+  Then `grep -nE "errorHandler|error_mapper|exception_filter|@ControllerAdvice" src/`
+- Pass condition: raw 500s and untyped `throw new Error(...)` only appear in framework-level error middleware, not in handlers/services.
+- If failed: define typed error classes (`NotFoundError`, `ConflictError`, etc.) and a single error-mapping middleware/filter.
+
+#### 7. No suppressed type errors
+- Check: `grep -nE ": any\b|@ts-ignore|@ts-expect-error|as any\b" src/ -r 2>/dev/null`
+- Pass condition: zero matches (TypeScript projects) OR only documented and justified cases (with an adjacent `// allow:` comment).
+- If failed: replace `any` with a precise type, or remove the suppression; never ship a silent bypass.
+
+#### 8. LSP diagnostics clean
+- Check: run `lsp_diagnostics` on the changed source directory.
+- Pass condition: zero errors; warnings allowed only if unrelated to the change.
+- If failed: fix every error introduced by the new code; re-run `lsp_diagnostics` until clean.
+
+#### 9. Test coverage on critical paths
+- Check: `bash -c 'cd src && grep -lE "createUser|placeOrder|charge|payout" -r . | xargs -I {} grep -lE "describe|test|it" {}.test.* 2>/dev/null'`
+- Pass condition: every business-critical function has at least one test file referencing it.
+- If failed: add at least one unit test covering the happy path and one covering an error branch; then run `backend-test`.
 
 ### Step 3: Tool Usage Rules (MANDATORY)
 
@@ -304,6 +348,42 @@ async createUser(dto: CreateUserDto): Promise<User> {
 - Request validation
 - Response shape and error mapping
 - Authentication/authorization behavior
+
+## Concurrent & Partial Work
+
+This skill participates in the shared checkpoint contract defined in `_shared/tool-rules.md` (Concurrent & Partial Work).
+
+### Checkpoint
+- File: `.opencode/everything-backend-memory/.checkpoints/backend-implement-<ISO-timestamp>.json`
+- Required fields:
+  - `feature_slug`: user-provided or auto-derived identifier for the change set (e.g., `user-registration`, `order-cancel`).
+  - `started_at`: ISO-8601 timestamp.
+  - `completed_steps`: array of step names already finished.
+  - `pending_steps`: array of step names still to run.
+  - `generated_files`: array of file paths this run created or modified.
+  - `memory_updates`: array of memory files this run appended to.
+
+### Resume
+1. On start, run `glob .opencode/everything-backend-memory/.checkpoints/backend-implement-*.json`.
+2. If a checkpoint exists, ask the user: "Resume from `<pending_steps[0]>` or start over?"
+   - In `mode=auto`, default to "resume" unless the checkpoint is older than 24 hours, in which case start over (and move the old checkpoint to `.checkpoints/archive/`).
+3. If resuming, re-load the checkpoint and skip `completed_steps`.
+4. When resuming from a checkpoint, the skill MUST re-validate generated code with `lsp_diagnostics` before continuing; previously clean files may have drifted.
+
+### Rollback
+1. Read the checkpoint's `generated_files` list.
+2. For each file, present `git checkout -- <file>` as the rollback command. Never run destructive deletions automatically.
+3. After the user confirms, run the listed `git checkout` commands and delete the checkpoint file.
+4. If a file was added (not just modified), suggest `git rm` or `rm` for the user to run, but do not execute it.
+
+### Multi-feature isolation
+- Every run MUST set a `feature_slug` before any write operation. If the user did not provide one, derive it from the first relevant file or ask.
+- Two concurrent runs of this skill with different `feature_slugs` must run in isolation — they do not share checkpoints or generated file lists.
+- Two concurrent runs with the SAME `feature_slug` are a collision: refuse to start and tell the user to either wait or pick a different slug.
+
+### Partial completion
+- If the run stops after some `generated_files` have been written but before all `pending_steps` finish, the checkpoint must still be saved.
+- On the next invocation, the resume step above applies. The user can pick which `pending_steps` to redo or skip.
 
 ## Edge Cases
 

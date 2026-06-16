@@ -16,12 +16,24 @@ description: "Design API endpoints including resource structure, request/respons
 ## Prerequisites
 
 - REQUIRED: project root confirmed and readable
+  - Check: `bash -c 'test -d src || test -d app || test -d internal || test -d lib'`
+  - If missing: stop and ask the user for the correct project path
 - REQUIRED: `_shared/principles.md` loaded
+  - Check: `read .agents/skills/_shared/principles.md | head -1`
+  - If missing: stop and ask the user to confirm the install location of the shared references
 - REQUIRED: API consumers and resources are identified
+  - Check: ask the user "What resources do you need to expose?" and "Who are the consumers?" and confirm non-empty answers
+  - If missing: stop and ask the user to identify at least one resource and one consumer before proceeding
 - RECOMMENDED: `.opencode/everything-backend-memory/tech-stack.md` exists and is non-empty
+  - Check: `glob .opencode/everything-backend-memory/tech-stack.md`
+  - If missing: run `backend-scan` to populate memory, or proceed with project-only context if the user confirms
 - RECOMMENDED: `.opencode/everything-backend-memory/project-overview.md` exists
+  - Check: `glob .opencode/everything-backend-memory/project-overview.md`
+  - If missing: run `backend-scan` to populate memory, or proceed with project-only context if the user confirms
 - RECOMMENDED: `api-patterns.md` exists
-- If any REQUIRED prerequisite fails, stop and ask the user for the missing item or run `backend-scan` automatically if a project path is known.
+  - Check: `glob .opencode/everything-backend-memory/api-patterns.md`
+  - If missing: create an empty `api-patterns.md` and append after this design is approved
+- If any REQUIRED Check fails, run `backend-scan` with `mode=auto`, then re-run these checks. If the missing file is a project file (e.g., manifest, source dir) that `backend-scan` cannot create, stop and ask the user.
 
 ## Required Context (load in order; stop if context budget is tight)
 

@@ -18,12 +18,24 @@ description: "Own deployment and infrastructure setup for backend projects. Use 
 ## Prerequisites
 
 - REQUIRED: project root confirmed and readable
+  - Check: `bash -c 'test -d src || test -d app || test -d internal || test -d lib'`
+  - If missing: stop and ask the user for the correct project path
 - REQUIRED: `_shared/principles.md` loaded (Security section at minimum)
+  - Check: `read .agents/skills/_shared/principles.md | head -1`
+  - If missing: stop and ask the user to confirm the install location of the shared references
 - REQUIRED: manifest files read to detect stack
+  - Check: `bash -c 'ls package.json pyproject.toml go.mod pom.xml build.gradle 2>/dev/null | head -1'`
+  - If missing: stop and ask the user to point at a backend project that has a known manifest (`package.json`, `pyproject.toml`, `go.mod`, `pom.xml`, or `build.gradle`)
 - RECOMMENDED: `.opencode/everything-backend-memory/tech-stack.md` exists and is non-empty
+  - Check: `glob .opencode/everything-backend-memory/tech-stack.md`
+  - If missing: run `backend-scan` to populate memory, or proceed with project-only context if the user confirms
 - RECOMMENDED: `.opencode/everything-backend-memory/project-overview.md` exists
+  - Check: `glob .opencode/everything-backend-memory/project-overview.md`
+  - If missing: run `backend-scan` to populate memory, or proceed with project-only context if the user confirms
 - RECOMMENDED: `db-schema.md` exists to know required backing services
-- If any REQUIRED prerequisite fails, stop and ask the user for the missing item or run `backend-scan` automatically if a project path is known.
+  - Check: `glob .opencode/everything-backend-memory/db-schema.md`
+  - If missing: run `backend-scan` to populate memory, or proceed without it and ask the user about required services
+- If any REQUIRED Check fails, run `backend-scan` with `mode=auto`, then re-run these checks. If the missing file is a project file (e.g., manifest, source dir) that `backend-scan` cannot create, stop and ask the user.
 
 ## Required Context (load in order; stop if context budget is tight)
 

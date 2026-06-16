@@ -16,12 +16,24 @@ description: "Design backend architecture including system structure, tech stack
 ## Prerequisites
 
 - REQUIRED: project root confirmed and readable
+  - Check: `bash -c 'test -d src || test -d app || test -d internal || test -d lib'`
+  - If missing: stop and ask the user for the correct project path
 - REQUIRED: `_shared/principles.md` loaded
+  - Check: `read .agents/skills/_shared/principles.md | head -1`
+  - If missing: stop and ask the user to confirm the install location of the shared references
 - REQUIRED: problem statement and constraints gathered
+  - Check: ask the user a "What problem does this backend solve?" question and confirm a non-empty answer
+  - If missing: stop and ask the user to provide the problem statement and constraints before proceeding
 - RECOMMENDED: `.opencode/everything-backend-memory/tech-stack.md` exists and is non-empty
+  - Check: `glob .opencode/everything-backend-memory/tech-stack.md`
+  - If missing: run `backend-scan` to populate memory, or proceed with project-only context if the user confirms
 - RECOMMENDED: `.opencode/everything-backend-memory/project-overview.md` exists
+  - Check: `glob .opencode/everything-backend-memory/project-overview.md`
+  - If missing: run `backend-scan` to populate memory, or proceed with project-only context if the user confirms
 - RECOMMENDED: `decisions.md` exists
-- If any REQUIRED prerequisite fails, stop and ask the user for the missing item or run `backend-scan` automatically if a project path is known.
+  - Check: `glob .opencode/everything-backend-memory/decisions.md`
+  - If missing: create an empty `decisions.md` on first use, or proceed without it
+- If any REQUIRED Check fails, run `backend-scan` with `mode=auto`, then re-run these checks. If the missing file is a project file (e.g., manifest, source dir) that `backend-scan` cannot create, stop and ask the user.
 
 ## Required Context (load in order; stop if context budget is tight)
 

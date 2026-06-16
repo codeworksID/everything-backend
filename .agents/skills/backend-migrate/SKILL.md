@@ -18,13 +18,27 @@ description: "Own database schema evolution and migration workflows for backend 
 ## Prerequisites
 
 - REQUIRED: project root confirmed and readable
+  - Check: `bash -c 'test -d src || test -d app || test -d internal || test -d lib'`
+  - If missing: stop and ask the user for the correct project path
 - REQUIRED: `_shared/principles.md` loaded (Security section at minimum)
+  - Check: `read .agents/skills/_shared/principles.md | head -1`
+  - If missing: stop and ask the user to confirm the install location of the shared references; the Database section is required for migration work
 - REQUIRED: current schema/migrations directory located
+  - Check: `glob 'migrations/**' 'db/migrate/**' 'prisma/migrations/**' 'alembic/versions/**' 'src/main/resources/db/migration/**'`
+  - If missing: stop and ask the user to provide the path to the existing migrations directory before proceeding
 - RECOMMENDED: `.opencode/everything-backend-memory/tech-stack.md` exists and is non-empty
+  - Check: `glob .opencode/everything-backend-memory/tech-stack.md`
+  - If missing: run `backend-scan` to populate memory, or proceed with project-only context if the user confirms
 - RECOMMENDED: `.opencode/everything-backend-memory/project-overview.md` exists
+  - Check: `glob .opencode/everything-backend-memory/project-overview.md`
+  - If missing: run `backend-scan` to populate memory, or proceed with project-only context if the user confirms
 - RECOMMENDED: `db-schema.md` exists
+  - Check: `glob .opencode/everything-backend-memory/db-schema.md`
+  - If missing: create an empty `db-schema.md` and append the updated schema after this migration is approved
 - RECOMMENDED: `decisions.md` contains prior migration conventions
-- If any REQUIRED prerequisite fails, stop and ask the user for the missing item or run `backend-scan` automatically if a project path is known.
+  - Check: `glob .opencode/everything-backend-memory/decisions.md`
+  - If missing: create an empty `decisions.md` and append the convention chosen for this migration
+- If any REQUIRED Check fails, run `backend-scan` with `mode=auto`, then re-run these checks. If the missing file is a project file (e.g., manifest, source dir) that `backend-scan` cannot create, stop and ask the user.
 
 ## Required Context (load in order; stop if context budget is tight)
 
@@ -271,3 +285,39 @@ Compare plans before and after the migration. Ensure the chosen plan is still ef
 6. Test on a production-like staging database
 7. Verify constraints, indexes, and query plans
 8. Deploy with monitoring and a documented rollback path
+
+## Concurrent & Partial Work
+
+This skill participates in the shared checkpoint contract defined in `_shared/tool-rules.md` (Concurrent & Partial Work).
+
+### Checkpoint
+- File: `.opencode/everything-backend-memory/.checkpoints/backend-migrate-<ISO-timestamp>.json`
+- Required fields:
+  - `feature_slug`: user-provided or auto-derived identifier for the change set (e.g., `user-registration`, `order-cancel`).
+  - `started_at`: ISO-8601 timestamp.
+  - `completed_steps`: array of step names already finished.
+  - `pending_steps`: array of step names still to run.
+  - `generated_files`: array of file paths this run created or modified.
+  - `memory_updates`: array of memory files this run appended to.
+
+### Resume
+1. On start, run `glob .opencode/everything-backend-memory/.checkpoints/backend-migrate-*.json`.
+2. If a checkpoint exists, ask the user: "Resume from `<pending_steps[0]>` or start over?"
+   - In `mode=auto`, default to "resume" unless the checkpoint is older than 24 hours, in which case start over (and move the old checkpoint to `.checkpoints/archive/`).
+3. If resuming, re-load the checkpoint and skip `completed_steps`.
+4. Migration checkpoints MUST be cleared only after the down migration has been verified; do not auto-delete a checkpoint on resume.
+
+### Rollback
+1. Read the checkpoint's `generated_files` list.
+2. For each file, present `git checkout -- <file>` as the rollback command. Never run destructive deletions automatically.
+3. After the user confirms, run the listed `git checkout` commands and delete the checkpoint file.
+4. If a file was added (not just modified), suggest `git rm` or `rm` for the user to run, but do not execute it.
+
+### Multi-feature isolation
+- Every run MUST set a `feature_slug` before any write operation. If the user did not provide one, derive it from the first relevant file or ask.
+- Two concurrent runs of this skill with different `feature_slugs` must run in isolation — they do not share checkpoints or generated file lists.
+- Two concurrent runs with the SAME `feature_slug` are a collision: refuse to start and tell the user to either wait or pick a different slug.
+
+### Partial completion
+- If the run stops after some `generated_files` have been written but before all `pending_steps` finish, the checkpoint must still be saved.
+- On the next invocation, the resume step above applies. The user can pick which `pending_steps` to redo or skip.

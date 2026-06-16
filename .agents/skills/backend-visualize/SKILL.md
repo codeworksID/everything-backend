@@ -16,13 +16,27 @@ description: "Generate beautiful, themed Mermaid diagrams from database schemas,
 ## Prerequisites
 
 - REQUIRED: project root confirmed and readable
+  - Check: `bash -c 'test -d src || test -d app || test -d internal || test -d lib'`
+  - If missing: stop and ask the user for the correct project path
 - REQUIRED: `_shared/principles.md` loaded (Security section at minimum)
+  - Check: `read .agents/skills/_shared/principles.md | head -1`
+  - If missing: stop and ask the user to confirm the install location of the shared references
 - REQUIRED: diagram type chosen by user
+  - Check: ask the user to pick from the diagram menu (ERD, Class, User/Actor, Flowchart, Sequence, Architecture) and confirm a non-empty choice
+  - If missing: stop and ask the user to pick a diagram type before proceeding
 - RECOMMENDED: `.opencode/everything-backend-memory/tech-stack.md` exists and is non-empty
+  - Check: `glob .opencode/everything-backend-memory/tech-stack.md`
+  - If missing: run `backend-scan` to populate memory, or proceed with project-only context if the user confirms
 - RECOMMENDED: `.opencode/everything-backend-memory/project-overview.md` exists
+  - Check: `glob .opencode/everything-backend-memory/project-overview.md`
+  - If missing: run `backend-scan` to populate memory, or proceed with project-only context if the user confirms
 - RECOMMENDED: `db-schema.md` for ERD
+  - Check: `glob .opencode/everything-backend-memory/db-schema.md`
+  - If missing: ask the user to provide a schema source (SQL DDL, ORM models, migration files, or a plain-text description) when the user picks ERD
 - RECOMMENDED: `project-overview.md` for architecture diagrams
-- If any REQUIRED prerequisite fails, stop and ask the user for the missing item or run `backend-scan` automatically if a project path is known.
+  - Check: `glob .opencode/everything-backend-memory/project-overview.md`
+  - If missing: ask the user to describe the system components and connections when the user picks an architecture diagram
+- If any REQUIRED Check fails, run `backend-scan` with `mode=auto`, then re-run these checks. If the missing file is a project file (e.g., manifest, source dir) that `backend-scan` cannot create, stop and ask the user.
 
 ## Required Context (load in order; stop if context budget is tight)
 

@@ -20,10 +20,16 @@ Two-in-one skill for understanding a backend codebase and keeping that understan
 Before starting a scan, confirm the following machine-checkable conditions:
 
 - REQUIRED: Project root exists and is accessible.
+  - Check: `bash -c 'test -d src || test -d app || test -d internal || test -d lib'`
+  - If missing: stop and ask the user for the correct project path before proceeding
 - REQUIRED: At least one manifest file or source directory is found (e.g., `package.json`, `go.mod`, `requirements.txt`, `src/`, `app/`, `internal/`).
+  - Check: `bash -c 'ls package.json pyproject.toml go.mod pom.xml build.gradle 2>/dev/null | head -1'`
+  - If missing: stop and ask the user for the correct project path that contains a known manifest or source directory
 - RECOMMENDED: `git` is available for staleness detection and drift comparison.
+  - Check: `bash -c 'git rev-parse --is-inside-work-tree 2>/dev/null'`
+  - If missing: proceed with filesystem-only drift detection and note in the summary that git-based staleness checks were skipped
 
-If a REQUIRED prerequisite is missing, ask the user for the correct project path before proceeding.
+If any REQUIRED Check fails, run `backend-scan` with `mode=auto`, then re-run these checks. If the missing file is a project file (e.g., manifest, source dir) that `backend-scan` cannot create, stop and ask the user.
 
 ## Required Context
 
