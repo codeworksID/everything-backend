@@ -18,3 +18,11 @@ These rules apply whenever a backend skill needs to inspect, navigate, or change
 - Use `lsp_*` tools to trace architectural boundaries and catch errors after edits.
 - Use `bash` for dynamic checks that produce observable evidence (exit codes, output, line numbers).
 - Delegate broad or cross-cutting searches to the platform agent call (OMO: `call_omo_agent`, Opencode: `task()`) with explore/research parameters.
+
+## Error Handling
+
+- **Command not found**: Report it as a tooling issue, suggest the install command or required setup, and do not treat the result as "all good".
+- **Command timeout (>30s)**: Kill the process, report the failure clearly, and suggest manual investigation.
+- **Partial failure**: Report what succeeded and what failed separately; do not collapse mixed results into a single pass/fail verdict.
+- **Tool unavailable (e.g., LSP not configured)**: Note it explicitly in the output; do not silently skip checks.
+- **Never silently swallow errors**: Do not present "all good" or a clean status when a check did not run or failed.

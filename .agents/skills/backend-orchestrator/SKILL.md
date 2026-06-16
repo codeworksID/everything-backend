@@ -43,4 +43,72 @@ Activate this skill when the user asks for backend help without naming a specifi
 
 Identify the intent, then activate the named skill directly using the mechanism available to you.
 
+## Workflows
+
+Use these multi-skill pipelines when the user request spans more than one concern. Each step lists the memory files it reads or writes.
+
+### New Feature (Full Stack)
+
+Use when adding a significant feature to an existing backend.
+
+1. **`backend-scan`** (if `.opencode/everything-backend-memory/` is empty or stale)
+   - Reads/writes: `project-overview.md`, `tech-stack.md`, `api-patterns.md`, `db-schema.md`, `decisions.md`, `issues.md`
+2. **`backend-db-design`**
+   - Reads: `tech-stack.md`, `project-overview.md`, `db-schema.md`
+   - Writes: `db-schema.md`, migration files
+3. **`backend-api-design`**
+   - Reads: `tech-stack.md`, `project-overview.md`, `api-patterns.md`
+   - Writes: `api-patterns.md`, OpenAPI/endpoint docs
+4. **`backend-auth`** (only if the feature needs auth, permissions, sessions, or JWT)
+   - Reads: `tech-stack.md`, `project-overview.md`, `api-patterns.md`
+   - Writes: `decisions.md`
+5. **`backend-implement`**
+   - Reads: `tech-stack.md`, `api-patterns.md`, `db-schema.md`
+   - Writes: source code, tests
+6. **`backend-test`**
+   - Reads: `tech-stack.md`, `api-patterns.md`
+   - Writes: test files, coverage reports
+7. **`backend-doctor`**
+   - Reads: `tech-stack.md`, `project-overview.md`, `api-patterns.md`
+   - Writes: `issues.md` (new findings)
+
+### Quick Add Endpoint
+
+Use when the stack is already known and only a small endpoint change is needed.
+
+1. **`backend-api-design`**
+   - Reads: `tech-stack.md`, `api-patterns.md`
+   - Writes: `api-patterns.md`
+2. **`backend-implement`**
+   - Reads: `tech-stack.md`, `api-patterns.md`
+   - Writes: source code
+3. **`backend-test`**
+   - Reads: `tech-stack.md`, `api-patterns.md`
+   - Writes: test files
+
+### Production Readiness
+
+Use before launch or before declaring a service production-ready.
+
+1. **`backend-ops`**
+   - Reads: `tech-stack.md`, `project-overview.md`, `api-patterns.md`, `decisions.md`
+   - Writes: observability/config code, `decisions.md`
+2. **`backend-deploy`**
+   - Reads: `tech-stack.md`, `project-overview.md`, `decisions.md`
+   - Writes: Docker/CI/CD/infrastructure files
+3. **`backend-doctor`**
+   - Reads: `tech-stack.md`, `project-overview.md`, `api-patterns.md`
+   - Writes: `issues.md`
+
+### Memory Refresh
+
+Use when memory files may be out of sync with the codebase.
+
+1. **`backend-scan`** with `mode=sync`
+   - Reads: existing `.opencode/everything-backend-memory/*.md`
+   - Writes: updated `project-overview.md`, `tech-stack.md`, `api-patterns.md`, `db-schema.md`, `decisions.md`, `issues.md`
+2. **`backend-doctor`**
+   - Reads: refreshed memory files
+   - Writes: `issues.md`
+
 For the principles and tool rules referenced by the routed skills, see `_shared/principles.md` and `_shared/tool-rules.md`.

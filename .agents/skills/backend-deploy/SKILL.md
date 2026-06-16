@@ -15,6 +15,26 @@ description: "Own deployment and infrastructure setup for backend projects. Use 
 - User asks about readiness/liveness probes, graceful shutdown, or health checks
 - User asks whether to use containers, serverless, or a PaaS
 
+## Prerequisites
+
+- REQUIRED: project root confirmed and readable
+- REQUIRED: `_shared/principles.md` loaded (Security section at minimum)
+- REQUIRED: manifest files read to detect stack
+- RECOMMENDED: `.opencode/everything-backend-memory/tech-stack.md` exists and is non-empty
+- RECOMMENDED: `.opencode/everything-backend-memory/project-overview.md` exists
+- RECOMMENDED: `db-schema.md` exists to know required backing services
+- If any REQUIRED prerequisite fails, stop and ask the user for the missing item or run `backend-scan` automatically if a project path is known.
+
+## Required Context (load in order; stop if context budget is tight)
+
+1. REQUIRED: `_shared/principles.md` → only relevant sections (Code/Architecture and System for deploy)
+2. REQUIRED: `tech-stack.md` (small, essential)
+3. REQUIRED: `project-overview.md`
+4. OPTIONAL: `db-schema.md` (useful for deploy)
+5. OPTIONAL: `api-patterns.md` (useful for deploy)
+6. OPTIONAL: `decisions.md` (only if prior decisions matter)
+7. SKIP: `issues.md` unless reviewing risks
+
 ## Context Loading
 
 Read memory files before generating deployment artifacts. For canonical backend principles, see `_shared/principles.md`; for tool rules, see `_shared/tool-rules.md`.

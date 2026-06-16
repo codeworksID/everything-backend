@@ -219,6 +219,136 @@ on_permanent_failure:
 - Use the same artifact/container across environments; only config changes
 - Document required variables with examples in a non-secret template
 
+## Execution
+
+Turn operational principles into observable, evidence-backed actions.
+
+### Audit Current Observability
+
+Run these probes and record file paths and line numbers for every finding.
+
+1. **Logging patterns**
+   - `grep -R "console\.log\|console\.error\|console\.warn" src/`
+   - `grep -R "logger\.\(info\|warn\|error\|debug\)" src/`
+   - Look for string concatenation inside log calls vs. structured objects.
+2. **Structured vs unstructured logs**
+   - Read representative log emission points; confirm JSON/key-value fields (`timestamp`, `level`, `service`, `correlation_id`, `message`, `error`).
+   - Flag plain string messages without context.
+3. **Correlation ID middleware**
+   - `grep -R "correlation_id\|correlation-id\|x-correlation-id\|traceparent\|request-id" src/`
+   - Confirm the ID is generated at the edge and propagated to downstream calls and log entries.
+4. **`/health` and `/metrics` endpoints**
+   - `grep -R "'/health'\|\"/health\"\|'/ready'\|\"/ready\"\|'/metrics'\|\"/metrics\"" src/`
+   - Probe running services with `curl -fsS http://localhost:<port>/health` and `/metrics`.
+5. **Sentry / error tracking**
+   - `grep -R "@sentry\|sentry\.io\|sentry-sdk\|newrelic\|datadog" src/ package.json pyproject.toml go.mod`
+6. **Tracing middleware**
+   - `grep -R "opentelemetry\|jaeger\|zipkin\|traceparent" src/`
+
+Record each result with severity using the same levels as `backend-doctor`.
+
+### Generate Observability Scaffolding
+
+If the audit shows gaps, add the missing pieces using the stack detected in `tech-stack.md`. Only generate snippets for stacks that are confirmed by the manifest.
+
+#### Node.js / Express
+
+- `/health` endpoint:
+  ```javascript
+  app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
+  ```
+- `/metrics` endpoint (using `prom-client`):
+  ```javascript
+  const client = require('prom-client');
+  client.collectDefaultMetrics();
+  app.get('/metrics', async (_req, res) => res.set('Content-Type', client.register.contentType).end(await client.register.metrics()));
+  ```
+- Structured logger (using `pino`):
+  ```javascript
+  const logger = require('pino')({ level: process.env.LOG_LEVEL || 'info' });
+  ```
+- Correlation ID middleware:
+  ```javascript
+  const { v4: uuidv4 } = require('uuid');
+  app.use((req, res, next) => {
+    req.correlation_id = req.get('x-correlation-id') || uuidv4();
+    res.set('x-correlation-id', req.correlation_id);
+    next();
+  });
+  ```
+
+#### Python / FastAPI
+
+- `/health` endpoint:
+  ```python
+  @app.get("/health")
+  async def health():
+      return {"status": "ok"}
+  ```
+- `/metrics` endpoint (using `prometheus-fastapi-instrumentator`):
+  ```python
+  from prometheus_fastapi_instrumentator import Instrumentator
+  Instrumentator().instrument(app).expose(app)
+  ```
+- Structured logger (using `structlog`):
+  ```python
+  import structlog
+  logger = structlog.get_logger()
+  ```
+- Correlation ID middleware:
+  ```python
+  from contextvars import ContextVar
+  correlation_id: ContextVar[str] = ContextVar('correlation_id')
+  ```
+
+#### Go
+
+- `/health` endpoint:
+  ```go
+  http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+      w.Header().Set("Content-Type", "application/json")
+      w.Write([]byte(`{"status":"ok"}`))
+  })
+  ```
+- `/metrics` endpoint (using `github.com/prometheus/client_golang/prometheus/promhttp`):
+  ```go
+  http.Handle("/metrics", promhttp.Handler())
+  ```
+- Structured logger (using `log/slog`):
+  ```go
+  logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+  ```
+- Correlation ID middleware:
+  ```go
+  func correlationIDMiddleware(next http.Handler) http.Handler {
+      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+          id := r.Header.Get("X-Correlation-ID")
+          if id == "" { id = uuid.NewString() }
+          w.Header().Set("X-Correlation-ID", id)
+          next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), "correlation_id", id)))
+      })
+  }
+  ```
+
+### Report Findings
+
+Present findings with the same severity scale used by `backend-doctor`:
+
+- **Critical**: secrets exposed in logs or health endpoints, missing PII redaction on a production path, no error tracking on a revenue-critical service.
+- **High**: no correlation IDs across service boundaries, missing `/health` or `/metrics` on a deployed service, unstructured logs only on a high-throughput path.
+- **Medium**: partial tracing coverage, missing `/ready` check, inconsistent log levels, no sampling on high-volume debug logs.
+- **Low**: cosmetic naming inconsistencies, missing documentation for observability endpoints, non-critical metric gaps.
+
+Each finding must include:
+1. **File path and line number**: `src/middleware/logger.ts:14`.
+2. **Audit command or probe** that produced the evidence: `grep -n "console.log" src/routes/order.ts`.
+3. **Relevant output excerpt**: 2–5 lines showing the matched code or probe result.
+4. **Severity and category**.
+5. **Why it violates an operational principle**.
+6. **Recommendation or minimal fix**.
+
+If a required tool is missing or fails to run, follow `_shared/tool-rules.md`: report the exact error as a **Medium** tooling finding and try an alternative command when available.
+
 ## Decision Trees
 
 ### Choosing a Cache Strategy

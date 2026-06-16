@@ -268,3 +268,48 @@ When updating any memory file, use a timestamped block:
 ```
 
 Preserve existing content. Mark deprecated items with `[DEPRECATED]` and keep them until explicitly removed.
+
+## Memory Staleness, Conflict Detection, and Compaction
+
+### Staleness
+
+A memory file is stale when its `## Last Updated` timestamp is older than the most recent git commit touching the files it describes.
+
+To check staleness:
+
+```bash
+git log -1 --format=%ct -- <paths>
+```
+
+Compare the returned commit timestamp against the memory file's `## Last Updated` timestamp. If the commit is newer, the memory file is stale and should be refreshed before it is used as the source of truth.
+
+### Conflict detection algorithm
+
+Before updating a memory file, compare live project artifacts against the latest timestamped entry in the memory file. Flag any of the following that differ:
+
+- **Fields / dependencies**: values in `package.json`, lockfiles, environment configs, or other manifest files.
+- **Tables / columns / relationships**: current ORM schema, migration files, or database introspection results.
+- **Endpoints / routes / handlers**: source tree routes, controllers, or API contracts.
+- **Directory structure**: files and folders discovered via `glob` or filesystem reads.
+
+Report each detected difference explicitly with the live value and the remembered value.
+
+### Conflict resolution rule
+
+Live code wins. If the live project artifacts conflict with the memory file:
+
+1. Do not silently discard live-code facts.
+2. Present a concise diff summary to the user showing what differs and what will change.
+3. Update the memory file to match the live artifacts after the user confirms, or proceed only when the change is unambiguous and mechanical.
+
+### Compaction rule
+
+Keep only the last **5** timestamped entries per memory file. To compact:
+
+1. Copy older entries to `.opencode/everything-backend-memory/archive/<file>-<YYYY-MM-DD>.md`, where `<file>` is the original memory filename without extension and `<YYYY-MM-DD>` is the date of the oldest archived entry.
+2. Prune the archived entries from the live memory file.
+3. Update `## Last Updated` to reflect the compaction.
+
+### Memory file size guard
+
+If a memory file exceeds approximately **200 KB**, trigger compaction automatically. Check the file size before appending a new entry, and archive/prune older entries until the file is under the guard threshold while retaining the most recent 5 entries at minimum.

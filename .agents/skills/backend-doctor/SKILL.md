@@ -12,6 +12,21 @@ description: "Run execution-based health checks on backend code: tests, lint/typ
 - Before deployment or after major changes.
 - User asks "is my code secure?" or "are there performance issues?".
 
+## Prerequisites
+
+Machine-checkable requirements before running any health check:
+
+- **REQUIRED**: Project root and working directory are confirmed.
+- **REQUIRED**: At least one manifest file has been read (`package.json`, `pyproject.toml`, `go.mod`, `pom.xml`, `Makefile`, or equivalent).
+- **RECOMMENDED**: Memory files exist under `.opencode/everything-backend-memory/`.
+  - `tech-stack.md`
+  - `project-overview.md`
+  - `api-patterns.md`
+  - `db-schema.md` (if the project uses a database)
+  - `decisions.md`
+  - `issues.md`
+- If a **REQUIRED** item is missing, run `backend-scan` first to build context.
+
 ## Context Loading
 
 Before running checks, read project memory for existing context:
@@ -25,11 +40,26 @@ Before running checks, read project memory for existing context:
 
 If memory is stale or empty, run `backend-scan` first to build context.
 
+## Required Context
+
+Ranked by priority for a health-check run:
+
+1. **`tech-stack.md`** — required. Determines manifest, test/lint/audit commands, and stack-specific anti-patterns.
+2. **`project-overview.md`** — required. Provides architecture shape, entry points, and critical paths.
+3. **`api-patterns.md`** — required. Exposes endpoint conventions, hot paths, and existing error contracts.
+4. **`db-schema.md`** — optional. Use when the project has a database and the check includes query or data-integrity risks.
+5. **`decisions.md`** — skip unless the findings raise architecture questions (for example, a god service or inconsistent layering that contradicts a prior decision).
+6. **`issues.md`** — optional. Use to validate whether known issues have regressed or been resolved.
+
 ## Before Running Checks
 
 1. Confirm the project root and working directory.
 2. If the project is unfamiliar, run `backend-scan` first to build context.
 3. Read the manifest files (`package.json`, `pyproject.toml`, `go.mod`, `pom.xml`, `Makefile`) to detect which commands the project actually exposes.
+
+### mode=auto
+
+If the user says "run doctor" or "check my backend", proceed through the prerequisites and checks without asking for confirmation. Only pause to ask when a finding requires a risky fix (for example, deleting data, rotating secrets, or running a destructive migration).
 
 ## Detecting the Right Commands
 
@@ -160,7 +190,7 @@ Every reported finding must be backed by evidence:
 5. **Why it violates a backend principle**.
 6. **Recommendation or minimal fix** with a code example when useful.
 
-If a required tool is missing or fails to run, report the exact error as a **Medium** finding under "Tooling".
+If a required tool is missing, times out, or fails to run, follow `_shared/tool-rules.md`: report the exact error as a **Medium** finding under "Tooling", capture the timeout duration or exit code, and try an alternative command from the Default Investigation Toolkit when available.
 
 ## Severity Rules
 

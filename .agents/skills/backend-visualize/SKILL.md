@@ -13,6 +13,27 @@ description: "Generate beautiful, themed Mermaid diagrams from database schemas,
 - User wants user flows, actor diagrams, or system architecture diagrams
 - After `backend-db-design` or `backend-architect` to produce diagrams
 
+## Prerequisites
+
+- REQUIRED: project root confirmed and readable
+- REQUIRED: `_shared/principles.md` loaded (Security section at minimum)
+- REQUIRED: diagram type chosen by user
+- RECOMMENDED: `.opencode/everything-backend-memory/tech-stack.md` exists and is non-empty
+- RECOMMENDED: `.opencode/everything-backend-memory/project-overview.md` exists
+- RECOMMENDED: `db-schema.md` for ERD
+- RECOMMENDED: `project-overview.md` for architecture diagrams
+- If any REQUIRED prerequisite fails, stop and ask the user for the missing item or run `backend-scan` automatically if a project path is known.
+
+## Required Context (load in order; stop if context budget is tight)
+
+1. REQUIRED: `_shared/principles.md` → only relevant sections
+2. REQUIRED: `tech-stack.md` (small, essential)
+3. REQUIRED: `project-overview.md`
+4. OPTIONAL: `db-schema.md` (essential for visualize)
+5. OPTIONAL: `api-patterns.md`
+6. OPTIONAL: `decisions.md` (only if prior decisions matter)
+7. SKIP: `issues.md` unless reviewing risks
+
 ## Visualization Process
 
 ### Step 0: Context Loading

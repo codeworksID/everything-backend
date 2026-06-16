@@ -15,6 +15,31 @@ Two-in-one skill for understanding a backend codebase and keeping that understan
 - User says "refresh memory", "update memory", "sync memory"
 - After major code changes or periodically to keep memory current
 
+## Prerequisites
+
+Before starting a scan, confirm the following machine-checkable conditions:
+
+- REQUIRED: Project root exists and is accessible.
+- REQUIRED: At least one manifest file or source directory is found (e.g., `package.json`, `go.mod`, `requirements.txt`, `src/`, `app/`, `internal/`).
+- RECOMMENDED: `git` is available for staleness detection and drift comparison.
+
+If a REQUIRED prerequisite is missing, ask the user for the correct project path before proceeding.
+
+## Required Context
+
+Load context in this priority order:
+
+- For `mode=initial`: only the project root path is required; no memory files need to exist yet.
+- For `mode=sync`: load existing memory files in priority order:
+  1. `project-overview.md`
+  2. `tech-stack.md`
+  3. `api-patterns.md`
+  4. `db-schema.md`
+  5. `decisions.md`
+  6. `issues.md`
+
+If memory files are stale or incomplete, run `backend-scan` in `mode=sync` first.
+
 ## Process
 
 Set `mode=initial` for the first scan of a project (creates memory files). Set `mode=sync` to detect drift from existing memory files and update them.
@@ -54,6 +79,17 @@ In both modes, start by scanning the project:
 
 ### Step 2: Mode Split
 
+#### mode=auto
+
+When the user triggers this skill with phrases such as "scan", "explore", or "refresh memory", run in autonomous mode:
+
+1. Do not ask for confirmation before starting.
+2. Select the concrete mode:
+   - Use `mode=initial` if no memory files exist in `.opencode/everything-backend-memory/`.
+   - Use `mode=sync` if memory files already exist.
+3. Execute the scan immediately.
+4. Present the discovery summary or change summary only at the end.
+
 #### mode=initial
 
 If no memory files exist, treat this as first discovery:
@@ -66,21 +102,26 @@ If no memory files exist, treat this as first discovery:
    - `decisions.md` — key architecture decisions (if any are obvious)
    - `issues.md` — known issues and TODOs (if found)
 2. Preserve any existing content by appending rather than overwriting.
-3. Present a discovery summary to the user and ask for confirmation.
+3. Present the discovery summary at the end; do not ask for confirmation before running.
 
 #### mode=sync
 
 If memory files already exist, treat this as drift detection:
 
-1. Read current memory files in `.opencode/everything-backend-memory/`:
+1. Check staleness for each memory file:
+   - Read the `Last Updated` timestamp from the file.
+   - Compare it against the latest `git` commit timestamp for the source files relevant to that memory file.
+   - If the commit timestamp is newer than the memory timestamp, mark the file as stale.
+2. If any file is stale, run drift detection and present a diff summary before applying updates.
+3. Read current memory files in `.opencode/everything-backend-memory/`:
    - `project-overview.md`, `tech-stack.md`, `api-patterns.md`, `db-schema.md`, `decisions.md`, `issues.md`
-2. Compare the live project state against memory.
-3. Classify changes:
+4. Compare the live project state against memory.
+5. Classify changes:
    - **New** routes/models/dependencies/configs → add to memory
    - **Modified** routes/schema/dependencies/configs → update memory
    - **Deleted** items → mark as deprecated in memory; do not remove without confirmation
-4. Generate a change summary and ask the user for confirmation before applying updates.
-5. After approval, update affected files with timestamped entries and refresh "Last Updated" timestamps.
+6. Generate a change summary and ask the user for confirmation before applying updates.
+7. After approval, update affected files with timestamped entries and refresh "Last Updated" timestamps.
 
 ### Step 3: Update Memory Files
 
@@ -101,6 +142,10 @@ Update rules:
 - Append new discoveries with timestamps.
 - Mark deprecated items clearly.
 - Update the "Last Updated" timestamp.
+
+### Compaction
+
+After appending a new timestamped entry to a memory file, count the timestamped entries in that file. If more than 5 exist, archive the oldest entries and retain only the most recent 5.
 
 Update entry format:
 

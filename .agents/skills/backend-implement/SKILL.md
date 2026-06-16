@@ -14,6 +14,28 @@ description: "Turn backend designs into code or evolve existing code. Supports N
 - Adding a new endpoint, field, service, middleware, or repository query to existing code
 - Splitting a fat controller, service, or repository
 
+## Prerequisites
+
+Before generating or modifying code, confirm the following machine-checkable conditions:
+
+- REQUIRED: Project root is confirmed and accessible.
+- REQUIRED: `tech-stack.md` exists or the tech stack can be inferred from project files.
+- RECOMMENDED: `api-patterns.md` and `db-schema.md` are available for the feature being implemented.
+
+If the design is missing, run `backend-api-design` and/or `backend-db-design` first.
+
+## Required Context
+
+Read memory files in this priority order:
+
+1. `tech-stack.md` — languages, frameworks, databases
+2. `api-patterns.md` — API design, endpoints
+3. `db-schema.md` — database schema
+4. `project-overview.md` — project type, structure
+5. `decisions.md` — architecture decisions (skip unless architecture questions arise)
+
+Only load `decisions.md` when the implementation raises architecture or cross-cutting design questions.
+
 ## Core Process
 
 ### Step 1: Context Loading
@@ -35,6 +57,19 @@ If memory is empty or stale, suggest running:
 ### Step 2: Implementation Rules (MANDATORY)
 
 Apply the code/architecture, API, system, and security principles in `_shared/principles.md` before writing or editing code.
+
+### Post-Generation Checklist
+
+After generating or modifying code, verify the following against `_shared/principles.md`:
+
+- [ ] Controllers/handlers contain no business logic (thin transport layer).
+- [ ] Services own transaction boundaries for multi-write flows (ACID transactions).
+- [ ] No raw SQL string concatenation; use parameterized queries or ORM equivalents (input validation/sanitization).
+- [ ] All endpoints have validation schemas at the boundary (validation at boundary).
+- [ ] Domain logic does not depend on HTTP, ORM, queue, or framework details.
+- [ ] Errors are typed and mapped centrally to responses.
+
+Verify using `lsp_diagnostics` and `grep`; do not rely on self-review alone.
 
 ### Step 3: Tool Usage Rules (MANDATORY)
 

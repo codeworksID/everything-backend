@@ -13,6 +13,26 @@ description: "Design and implement authentication and authorization for backend 
 - Starting a new feature that requires identity or access control
 - Reviewing or hardening an existing auth flow
 
+## Prerequisites
+
+- REQUIRED: project root confirmed and readable
+- REQUIRED: `_shared/principles.md` loaded (Security section at minimum)
+- REQUIRED: identity/authorization scope is confirmed (human users, service accounts, OAuth, etc.)
+- RECOMMENDED: `.opencode/everything-backend-memory/tech-stack.md` exists and is non-empty
+- RECOMMENDED: `.opencode/everything-backend-memory/project-overview.md` exists
+- RECOMMENDED: `api-patterns.md` exists
+- If any REQUIRED prerequisite fails, stop and ask the user for the missing item or run `backend-scan` automatically if a project path is known.
+
+## Required Context (load in order; stop if context budget is tight)
+
+1. REQUIRED: `_shared/principles.md` → only relevant sections (Security for auth)
+2. REQUIRED: `tech-stack.md` (small, essential)
+3. REQUIRED: `project-overview.md`
+4. OPTIONAL: `db-schema.md`
+5. OPTIONAL: `api-patterns.md` (useful for auth)
+6. OPTIONAL: `decisions.md` (only if prior decisions matter)
+7. SKIP: `issues.md` unless reviewing risks
+
 ## Context Loading
 
 Before proposing an auth design, inspect the real codebase and memory:

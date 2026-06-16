@@ -13,17 +13,35 @@ description: "Own the testing workflow for backend projects: design test strateg
 - Choosing or changing a test framework
 - Reviewing coverage before deployment
 
-## Context Loading
+## Prerequisites
 
-Read `.opencode/everything-backend-memory/` first:
+Before working with tests, confirm the following machine-checkable conditions:
 
-- `project-overview.md` — project type and module boundaries
-- `tech-stack.md` — languages, frameworks, test runners
-- `api-patterns.md` — endpoints, contracts, error shapes
-- `db-schema.md` — tables, relationships, invariants
-- `decisions.md` — architecture that affects testability
+- REQUIRED: A manifest file has been read (`package.json`, `pyproject.toml`, `go.mod`, `pom.xml`, `build.gradle`, etc.).
+- REQUIRED: A test runner has been detected from the manifest or configuration.
+- RECOMMENDED: Memory files exist in `.opencode/everything-backend-memory/`.
+
+If a REQUIRED prerequisite is missing, run `backend-scan` first to establish context.
+
+## Required Context
+
+Read memory files in this priority order:
+
+1. `tech-stack.md` — languages, frameworks, test runners (highest priority)
+2. `api-patterns.md` — endpoints, contracts, error shapes
+3. `project-overview.md` — project type and module boundaries
+4. `db-schema.md` — tables, relationships, invariants
+5. `decisions.md` — architecture that affects testability
 
 If memory is stale, run `backend-scan` first.
+
+## mode=auto
+
+When the user says "run tests", "check tests", or "test", run in autonomous mode:
+
+1. Execute the detected test command immediately.
+2. Report results without asking for confirmation.
+3. Ask for confirmation only if the intent appears to be adding new tests.
 
 ## Test Strategy
 
