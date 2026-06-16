@@ -1,6 +1,6 @@
 {
   "name": "everything-backend",
-  "version": "0.2.8",
+  "version": "0.3.0",
   "description": "Reusable Opencode backend skills with an installable CLI.",
   "license": "MIT",
   "repository": {
