@@ -50,6 +50,8 @@ If a skill's individual `mode=auto` definition conflicts with this contract, the
 
 ## Concurrent & Partial Work
 
+> **This section is the single source of truth** for checkpoint, resume, rollback, and multi-feature isolation behavior across all skills. Individual skills (backend-implement, backend-test, backend-migrate, etc.) **must not redefine** any checkpoint or resume rules — they must reference this section instead. If a skill's checkpoint logic conflicts with this contract, the contract wins.
+
 Defines the contract for handling non-linear work (interrupted runs, parallel features, rollback requests).
 
 - **Checkpoint files**: when `mode=auto` runs generate code or memory updates, write a checkpoint to `.opencode/everything-backend-memory/.checkpoints/<skill>-<ISO-timestamp>.json` containing: skill name, started_at, completed_steps[], pending_steps[], generated_files[], memory_updates[].

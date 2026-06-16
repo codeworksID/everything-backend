@@ -15,47 +15,31 @@ description: "Design and implement authentication and authorization for backend 
 
 ## Prerequisites
 
-- REQUIRED: project root confirmed and readable
-  - Check: `bash -c 'test -d src || test -d app || test -d internal || test -d lib'`
-  - If missing: stop and ask the user for the correct project path
-- REQUIRED: `_shared/principles.md` loaded (Security section at minimum)
-  - Check: `read .agents/skills/_shared/principles.md | head -1`
-  - If missing: stop and ask the user to confirm the install location of the shared references; the Security section is non-negotiable for auth work
-- REQUIRED: identity/authorization scope is confirmed (human users, service accounts, OAuth, etc.)
+See `_shared/context-loading.md` for standard prerequisites (project root check, manifest detection, shared file presence, memory directory check, fallback rules, and context priority list).
+
+Auth-specific prerequisites on top of the standard set:
+
+- **REQUIRED**: `_shared/principles.md` loaded, **Security section mandatory**
+  - Check: `read .agents/skills/_shared/principles.md` and verify the `## Security` section is present
+  - If missing: stop and ask the user to confirm the install location of the shared references. The Security section is non-negotiable for auth work.
+- **REQUIRED**: identity/authorization scope is confirmed (human users, service accounts, OAuth, etc.)
   - Check: ask the user "Who is the principal: human users, service accounts, or both?" and confirm a non-empty answer
-  - If missing: stop and ask the user to confirm the identity/authorization scope before proceeding
-- RECOMMENDED: `.opencode/everything-backend-memory/tech-stack.md` exists and is non-empty
-  - Check: `glob .opencode/everything-backend-memory/tech-stack.md`
-  - If missing: run `backend-scan` to populate memory, or proceed with project-only context if the user confirms
-- RECOMMENDED: `.opencode/everything-backend-memory/project-overview.md` exists
-  - Check: `glob .opencode/everything-backend-memory/project-overview.md`
-  - If missing: run `backend-scan` to populate memory, or proceed with project-only context if the user confirms
-- RECOMMENDED: `api-patterns.md` exists
-  - Check: `glob .opencode/everything-backend-memory/api-patterns.md`
-  - If missing: create an empty `api-patterns.md` and append auth-related patterns after this design is approved
-- If any REQUIRED Check fails, run `backend-scan` with `mode=auto`, then re-run these checks. If the missing file is a project file (e.g., manifest, source dir) that `backend-scan` cannot create, stop and ask the user.
+  - If missing: stop before proceeding
 
-## Required Context (load in order; stop if context budget is tight)
+## Required Context
 
-1. REQUIRED: `_shared/principles.md` → only relevant sections (Security for auth)
-2. REQUIRED: `tech-stack.md` (small, essential)
-3. REQUIRED: `project-overview.md`
-4. OPTIONAL: `db-schema.md`
-5. OPTIONAL: `api-patterns.md` (useful for auth)
-6. OPTIONAL: `decisions.md` (only if prior decisions matter)
-7. SKIP: `issues.md` unless reviewing risks
+Follow the standard context priority list in `_shared/context-loading.md` with these auth-specific overrides:
+
+- **Load `_shared/principles.md` first**, Security section mandatory. This is load-bearing for auth work.
+- Load `api-patterns.md` at priority 4 (useful for discovering existing auth conventions)
+- Skip `issues.md` unless reviewing risks
 
 ## Context Loading
 
-Before proposing an auth design, inspect the real codebase and memory:
+Before proposing an auth design, supplement the standard context loading with auth-specific codebase inspection:
 
-1. **`read`** `.opencode/everything-backend-memory/tech-stack.md` for current auth choices (JWT / OAuth / Session)
-2. **`read`** `.opencode/everything-backend-memory/api-patterns.md` for existing authentication conventions
-3. **`read`** `.opencode/everything-backend-memory/decisions.md` for prior auth architecture decisions
-4. **`glob`** and **`read`** existing auth middleware, user models, and protected routes
-5. **`grep`** for patterns like `bcrypt`, `jwt`, `passport`, `session`, `authorize`, `permission`, `role`
-
-If memory is empty or stale, suggest running `backend-scan` first.
+1. **`glob`** and **`read`** existing auth middleware, user models, and protected routes
+2. **`grep`** for patterns like `bcrypt`, `jwt`, `passport`, `session`, `authorize`, `permission`, `role`
 
 ## AuthN Design
 

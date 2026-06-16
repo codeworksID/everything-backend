@@ -15,48 +15,27 @@ description: "Design database schemas including table structures, relationships,
 
 ## Prerequisites
 
-- REQUIRED: project root confirmed and readable
-  - Check: `bash -c 'test -d src || test -d app || test -d internal || test -d lib'`
-  - If missing: stop and ask the user for the correct project path
-- REQUIRED: `_shared/principles.md` loaded
-  - Check: `read .agents/skills/_shared/principles.md | head -1`
-  - If missing: stop and ask the user to confirm the install location of the shared references
+See `_shared/context-loading.md` for standard prerequisites (project root check, manifest detection, shared file presence, memory fallback, and staleness rules).
+
+**DB-design-specific prerequisites:**
+
 - REQUIRED: data storage need is confirmed
   - Check: ask the user "What data do you need to store?" and confirm at least one entity is identified
   - If missing: stop and ask the user to confirm the data storage need and at least one entity
-- RECOMMENDED: `.opencode/everything-backend-memory/tech-stack.md` exists and is non-empty
-  - Check: `glob .opencode/everything-backend-memory/tech-stack.md`
-  - If missing: run `backend-scan` to populate memory, or proceed with project-only context if the user confirms
-- RECOMMENDED: `.opencode/everything-backend-memory/project-overview.md` exists
-  - Check: `glob .opencode/everything-backend-memory/project-overview.md`
-  - If missing: run `backend-scan` to populate memory, or proceed with project-only context if the user confirms
+- REQUIRED: `_shared/principles.md` loaded (especially the database and security sections)
 - RECOMMENDED: `db-schema.md` exists
   - Check: `glob .opencode/everything-backend-memory/db-schema.md`
   - If missing: create an empty `db-schema.md` and append the new schema after this design is approved
-- If any REQUIRED Check fails, run `backend-scan` with `mode=auto`, then re-run these checks. If the missing file is a project file (e.g., manifest, source dir) that `backend-scan` cannot create, stop and ask the user.
 
-## Required Context (load in order; stop if context budget is tight)
+## Required Context
 
-1. REQUIRED: `_shared/principles.md` → only Code/Architecture, API, System, Security sections
-2. REQUIRED: `tech-stack.md` (small, essential)
-3. REQUIRED: `project-overview.md`
-4. OPTIONAL: `db-schema.md` (only if touching data layer)
-5. OPTIONAL: `api-patterns.md` (only if designing endpoints)
-6. OPTIONAL: `decisions.md` (only if prior decisions matter)
-7. SKIP: `issues.md` unless reviewing risks
+Follow the priority list in `_shared/context-loading.md`. Always load `project-overview.md` and `tech-stack.md`. Load `db-schema.md` when touching the data layer. Load `api-patterns.md` and `decisions.md` lazily when the task involves endpoints or prior design choices.
 
 ## Design Process
 
 ### Step 0: Context Loading
 
-Before gathering requirements, read project memory for existing context:
-
-- `project-overview.md` — project type and module boundaries
-- `tech-stack.md` — languages, frameworks, databases, ORM
-- `db-schema.md` — current database schema
-- `decisions.md` — prior schema or architecture decisions
-
-If memory is stale or empty, suggest running `backend-scan` first.
+Load memory files per the priority list in `_shared/context-loading.md`. If memory is stale or empty, suggest running `backend-scan` first.
 
 ### Step 1: Requirements Gathering
 

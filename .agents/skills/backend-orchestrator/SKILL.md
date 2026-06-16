@@ -22,6 +22,8 @@ Activate this skill when the user asks for backend help without naming a specifi
 - `backend-ops` — Design observability, caching, async messaging, and config.
 - `backend-deploy` — Set up deployment, containers, and CI/CD.
 - `backend-migrate` — Plan and execute database schema evolution.
+- `backend-visualize` — Generate Mermaid diagrams (ERD, class, actor, flowchart, sequence, architecture).
+- `backend-refactor` — Behavior-preserving refactoring: split fat controllers/services, extract modules, reduce coupling, dependency inversion, strangler-fig, modernize legacy.
 
 ## Routing Table
 
@@ -38,6 +40,8 @@ Activate this skill when the user asks for backend help without naming a specifi
 | Logging, metrics, caching, queues, config | `backend-ops` |
 | Deploy, Docker, CI/CD, infrastructure | `backend-deploy` |
 | Evolve schema, migrations, backfills | `backend-migrate` |
+| Refactor, split, extract, reduce coupling, modernize legacy (behavior-preserving) | `backend-refactor` |
+| Visualize database, draw ERD, create class diagram, diagram schema, architecture diagram | `backend-visualize` |
 
 ## How to Route
 

@@ -15,35 +15,21 @@ description: "Design API endpoints including resource structure, request/respons
 
 ## Prerequisites
 
-- REQUIRED: project root confirmed and readable
-  - Check: `bash -c 'test -d src || test -d app || test -d internal || test -d lib'`
-  - If missing: stop and ask the user for the correct project path
-- REQUIRED: `_shared/principles.md` loaded
-  - Check: `read .agents/skills/_shared/principles.md | head -1`
-  - If missing: stop and ask the user to confirm the install location of the shared references
+See `_shared/context-loading.md` for standard prerequisites (project root check, manifest detection, shared file presence, memory directory fallback, and context priority list).
+
+Add any skill-specific prerequisites below:
 - REQUIRED: API consumers and resources are identified
   - Check: ask the user "What resources do you need to expose?" and "Who are the consumers?" and confirm non-empty answers
   - If missing: stop and ask the user to identify at least one resource and one consumer before proceeding
-- RECOMMENDED: `.opencode/everything-backend-memory/tech-stack.md` exists and is non-empty
-  - Check: `glob .opencode/everything-backend-memory/tech-stack.md`
-  - If missing: run `backend-scan` to populate memory, or proceed with project-only context if the user confirms
-- RECOMMENDED: `.opencode/everything-backend-memory/project-overview.md` exists
-  - Check: `glob .opencode/everything-backend-memory/project-overview.md`
-  - If missing: run `backend-scan` to populate memory, or proceed with project-only context if the user confirms
 - RECOMMENDED: `api-patterns.md` exists
   - Check: `glob .opencode/everything-backend-memory/api-patterns.md`
   - If missing: create an empty `api-patterns.md` and append after this design is approved
-- If any REQUIRED Check fails, run `backend-scan` with `mode=auto`, then re-run these checks. If the missing file is a project file (e.g., manifest, source dir) that `backend-scan` cannot create, stop and ask the user.
 
-## Required Context (load in order; stop if context budget is tight)
+## Required Context
 
-1. REQUIRED: `_shared/principles.md` → only Code/Architecture, API, System, Security sections
-2. REQUIRED: `tech-stack.md` (small, essential)
-3. REQUIRED: `project-overview.md`
-4. OPTIONAL: `db-schema.md` (only if touching data layer)
-5. OPTIONAL: `api-patterns.md` (only if designing endpoints)
-6. OPTIONAL: `decisions.md` (only if prior decisions matter)
-7. SKIP: `issues.md` unless reviewing risks
+See `_shared/context-loading.md` § Standard Required Context Priority List for the shared priority order and loading rules.
+
+This skill always loads priorities 1 (`project-overview.md`) and 2 (`tech-stack.md`), plus 3 (`db-schema.md`) and 4 (`api-patterns.md`) when designing API endpoints.
 
 ## Design Process
 
@@ -59,12 +45,6 @@ Before proposing endpoints, read project memory for existing context:
 
 If memory is stale or empty, suggest running `backend-scan` first.
 
-### Step 0.5: Tool-Assisted Discovery (MANDATORY)
-
-Before proposing endpoints, inspect the real codebase and context with OpenCode tools.
-
-See `_shared/tool-rules.md` for the canonical tool-usage rules.
-
 ### Step 1: Requirements Gathering
 
 Ask the user iteratively:
@@ -78,7 +58,13 @@ Ask the user iteratively:
 Always confirm:
 - "Let me confirm the resources: [list]. Did I miss any?"
 
-### Step 1.5: API Principles (MANDATORY)
+### Step 1.5: Tool-Assisted Discovery (MANDATORY)
+
+Before proposing endpoints, inspect the real codebase and context with OpenCode tools.
+
+See `_shared/tool-rules.md` for the canonical tool-usage rules.
+
+### Step 1.6: API Principles (MANDATORY)
 
 Apply the API principles in `_shared/principles.md` before defining endpoints.
 

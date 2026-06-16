@@ -14,24 +14,12 @@ description: "Run execution-based health checks on backend code: tests, lint/typ
 
 ## Prerequisites
 
-Machine-checkable requirements before running any health check:
+See `_shared/context-loading.md` for standard prerequisites (project root check, manifest detection, memory file presence, fallback rules, and context priority list). All checks use OpenCode-native tools and work cross-platform.
 
-- **REQUIRED**: Project root and working directory are confirmed.
-  - Check: `bash -c 'test -d src || test -d app || test -d internal || test -d lib'`
-  - If missing: stop and ask the user for the correct project path
-- **REQUIRED**: At least one manifest file has been read (`package.json`, `pyproject.toml`, `go.mod`, `pom.xml`, `Makefile`, or equivalent).
-  - Check: `bash -c 'ls package.json pyproject.toml go.mod pom.xml build.gradle 2>/dev/null | head -1'`
-  - If missing: stop and ask the user for the correct project path that contains a known manifest
-- **RECOMMENDED**: Memory files exist under `.opencode/everything-backend-memory/`.
-  - Check: `glob .opencode/everything-backend-memory/{tech-stack,project-overview,api-patterns,db-schema,decisions,issues}.md`
-  - If missing: run `backend-scan` to build context, or proceed with manifest-only context and note the gap in the report
-  - `tech-stack.md`
-  - `project-overview.md`
-  - `api-patterns.md`
-  - `db-schema.md` (if the project uses a database)
-  - `decisions.md`
-  - `issues.md`
-- If any REQUIRED Check fails, run `backend-scan` with `mode=auto`, then re-run these checks. If the missing file is a project file (e.g., manifest, source dir) that `backend-scan` cannot create, stop and ask the user.
+Doctor-specific prerequisites:
+
+- **REQUIRED**: `issues.md` must be loaded alongside the standard priority files. Health checks use it to validate whether known issues have regressed or been resolved.
+- If any standard prerequisite fails, follow the recovery rules in `_shared/context-loading.md` (run `backend-scan` with `mode=auto`, then re-check). If the missing file is a project file that `backend-scan` cannot create, stop and ask the user.
 
 ## Context Loading
 

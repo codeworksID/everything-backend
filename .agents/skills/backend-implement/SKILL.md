@@ -16,31 +16,23 @@ description: "Turn backend designs into code or evolve existing code. Supports N
 
 ## Prerequisites
 
-Before generating or modifying code, confirm the following machine-checkable conditions:
+See `_shared/context-loading.md` for standard prerequisites (project root check, manifest detection, memory file presence, fallback rules, and context priority list).
 
-- REQUIRED: Project root is confirmed and accessible.
-  - Check: `bash -c 'test -d src || test -d app || test -d internal || test -d lib'`
-  - If missing: stop and ask the user for the correct project path
+Add these implementation-specific prerequisites:
+
 - REQUIRED: `tech-stack.md` exists or the tech stack can be inferred from project files.
-  - Check: `glob .opencode/everything-backend-memory/tech-stack.md`; if empty, fall back to `bash -c 'ls package.json pyproject.toml go.mod pom.xml build.gradle 2>/dev/null | head -1'`
-  - If missing: stop and ask the user for the project path that contains a known manifest, or run `backend-scan` to populate memory
+  - If missing: run `backend-scan` with `mode=auto` to populate memory
 - RECOMMENDED: `api-patterns.md` and `db-schema.md` are available for the feature being implemented.
-  - Check: `glob .opencode/everything-backend-memory/api-patterns.md` and `glob .opencode/everything-backend-memory/db-schema.md`
   - If missing: run `backend-api-design` and/or `backend-db-design` to produce the missing design, or proceed with the existing design context the user provides
-
-If any REQUIRED Check fails, run `backend-scan` with `mode=auto`, then re-run these checks. If the missing file is a project file (e.g., manifest, source dir) that `backend-scan` cannot create, stop and ask the user.
 
 ## Required Context
 
-Read memory files in this priority order:
+See `_shared/context-loading.md` for the standard context priority list and loading rules.
 
-1. `tech-stack.md` — languages, frameworks, databases
-2. `api-patterns.md` — API design, endpoints
-3. `db-schema.md` — database schema
-4. `project-overview.md` — project type, structure
-5. `decisions.md` — architecture decisions (skip unless architecture questions arise)
+Implementation-specific overrides:
 
-Only load `decisions.md` when the implementation raises architecture or cross-cutting design questions.
+- Always load: `tech-stack.md`, `api-patterns.md`, `db-schema.md`, `project-overview.md`
+- Lazy-load: `decisions.md` only when the implementation raises architecture or cross-cutting design questions
 
 ## Core Process
 
@@ -111,7 +103,7 @@ After generating or modifying code, run each check below. A run is "clean" only 
 - If failed: fix every error introduced by the new code; re-run `lsp_diagnostics` until clean.
 
 #### 9. Test coverage on critical paths
-- Check: `bash -c 'cd src && grep -lE "createUser|placeOrder|charge|payout" -r . | xargs -I {} grep -lE "describe|test|it" {}.test.* 2>/dev/null'`
+- Check: use `grep` to find business-critical functions (`createUser`, `placeOrder`, `charge`, `payout`, or project-specific equivalents), then use `glob`/`grep` to find matching test files that reference those functions.
 - Pass condition: every business-critical function has at least one test file referencing it.
 - If failed: add at least one unit test covering the happy path and one covering an error branch; then run `backend-test`.
 
@@ -351,39 +343,9 @@ async createUser(dto: CreateUserDto): Promise<User> {
 
 ## Concurrent & Partial Work
 
-This skill participates in the shared checkpoint contract defined in `_shared/tool-rules.md` (Concurrent & Partial Work).
+See `_shared/tool-rules.md` (Concurrent & Partial Work) for checkpoint, resume, rollback, and multi-feature isolation rules.
 
-### Checkpoint
-- File: `.opencode/everything-backend-memory/.checkpoints/backend-implement-<ISO-timestamp>.json`
-- Required fields:
-  - `feature_slug`: user-provided or auto-derived identifier for the change set (e.g., `user-registration`, `order-cancel`).
-  - `started_at`: ISO-8601 timestamp.
-  - `completed_steps`: array of step names already finished.
-  - `pending_steps`: array of step names still to run.
-  - `generated_files`: array of file paths this run created or modified.
-  - `memory_updates`: array of memory files this run appended to.
-
-### Resume
-1. On start, run `glob .opencode/everything-backend-memory/.checkpoints/backend-implement-*.json`.
-2. If a checkpoint exists, ask the user: "Resume from `<pending_steps[0]>` or start over?"
-   - In `mode=auto`, default to "resume" unless the checkpoint is older than 24 hours, in which case start over (and move the old checkpoint to `.checkpoints/archive/`).
-3. If resuming, re-load the checkpoint and skip `completed_steps`.
-4. When resuming from a checkpoint, the skill MUST re-validate generated code with `lsp_diagnostics` before continuing; previously clean files may have drifted.
-
-### Rollback
-1. Read the checkpoint's `generated_files` list.
-2. For each file, present `git checkout -- <file>` as the rollback command. Never run destructive deletions automatically.
-3. After the user confirms, run the listed `git checkout` commands and delete the checkpoint file.
-4. If a file was added (not just modified), suggest `git rm` or `rm` for the user to run, but do not execute it.
-
-### Multi-feature isolation
-- Every run MUST set a `feature_slug` before any write operation. If the user did not provide one, derive it from the first relevant file or ask.
-- Two concurrent runs of this skill with different `feature_slugs` must run in isolation — they do not share checkpoints or generated file lists.
-- Two concurrent runs with the SAME `feature_slug` are a collision: refuse to start and tell the user to either wait or pick a different slug.
-
-### Partial completion
-- If the run stops after some `generated_files` have been written but before all `pending_steps` finish, the checkpoint must still be saved.
-- On the next invocation, the resume step above applies. The user can pick which `pending_steps` to redo or skip.
+**Implement-specific caveat:** when resuming from a checkpoint, run `lsp_diagnostics` on all `generated_files` before continuing. Previously clean code may have drifted while the checkpoint was inactive.
 
 ## Edge Cases
 

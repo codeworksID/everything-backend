@@ -17,15 +17,17 @@ description: "Own deployment and infrastructure setup for backend projects. Use 
 
 ## Prerequisites
 
+See `_shared/tool-rules.md` for the investigation toolkit. Use cross-platform tools (`glob`, `read`) instead of shell-specific commands.
+
 - REQUIRED: project root confirmed and readable
-  - Check: `bash -c 'test -d src || test -d app || test -d internal || test -d lib'`
+  - Check: `glob` for `src/`, `app/`, `internal/`, or `lib/` directories
   - If missing: stop and ask the user for the correct project path
 - REQUIRED: `_shared/principles.md` loaded (Security section at minimum)
-  - Check: `read .agents/skills/_shared/principles.md | head -1`
+  - Check: `read .agents/skills/_shared/principles.md`
   - If missing: stop and ask the user to confirm the install location of the shared references
 - REQUIRED: manifest files read to detect stack
-  - Check: `bash -c 'ls package.json pyproject.toml go.mod pom.xml build.gradle 2>/dev/null | head -1'`
-  - If missing: stop and ask the user to point at a backend project that has a known manifest (`package.json`, `pyproject.toml`, `go.mod`, `pom.xml`, or `build.gradle`)
+  - Check: `glob` for `package.json`, `pyproject.toml`, `go.mod`, `pom.xml`, or `build.gradle`
+  - If missing: stop and ask the user to point at a backend project with a known manifest
 - RECOMMENDED: `.opencode/everything-backend-memory/tech-stack.md` exists and is non-empty
   - Check: `glob .opencode/everything-backend-memory/tech-stack.md`
   - If missing: run `backend-scan` to populate memory, or proceed with project-only context if the user confirms
@@ -37,24 +39,18 @@ description: "Own deployment and infrastructure setup for backend projects. Use 
   - If missing: run `backend-scan` to populate memory, or proceed without it and ask the user about required services
 - If any REQUIRED Check fails, run `backend-scan` with `mode=auto`, then re-run these checks. If the missing file is a project file (e.g., manifest, source dir) that `backend-scan` cannot create, stop and ask the user.
 
-## Required Context (load in order; stop if context budget is tight)
+## Required Context
+
+Read memory files before generating deployment artifacts. For canonical backend principles, see `_shared/principles.md`; for tool rules, see `_shared/tool-rules.md`; for loading strategy, see `_shared/context-loading.md`.
 
 1. REQUIRED: `_shared/principles.md` → only relevant sections (Code/Architecture and System for deploy)
-2. REQUIRED: `tech-stack.md` (small, essential)
-3. REQUIRED: `project-overview.md`
-4. OPTIONAL: `db-schema.md` (useful for deploy)
+2. REQUIRED: `tech-stack.md` - language, framework, database, cache, ORM
+3. REQUIRED: `project-overview.md` - project type, structure, entry points
+4. OPTIONAL: `db-schema.md` - required services (DB, cache, queue)
 5. OPTIONAL: `api-patterns.md` (useful for deploy)
-6. OPTIONAL: `decisions.md` (only if prior decisions matter)
+6. OPTIONAL: `decisions.md` - prior architecture or hosting decisions
 7. SKIP: `issues.md` unless reviewing risks
 
-## Context Loading
-
-Read memory files before generating deployment artifacts. For canonical backend principles, see `_shared/principles.md`; for tool rules, see `_shared/tool-rules.md`.
-
-- `project-overview.md` - project type, structure, entry points
-- `tech-stack.md` - language, framework, database, cache, ORM
-- `db-schema.md` - required services (DB, cache, queue)
-- `decisions.md` - prior architecture or hosting decisions
 ## Containerization
 
 ### Dockerfile Template

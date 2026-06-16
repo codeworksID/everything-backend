@@ -15,35 +15,21 @@ description: "Design backend architecture including system structure, tech stack
 
 ## Prerequisites
 
-- REQUIRED: project root confirmed and readable
-  - Check: `bash -c 'test -d src || test -d app || test -d internal || test -d lib'`
-  - If missing: stop and ask the user for the correct project path
-- REQUIRED: `_shared/principles.md` loaded
-  - Check: `read .agents/skills/_shared/principles.md | head -1`
+See `_shared/context-loading.md` for standard prerequisites (project root check, manifest detection, shared file presence, memory directory fallback, and staleness check).
+
+Architect-specific additions:
+
+- REQUIRED: `_shared/principles.md` loaded and applied
+  - Check: `read .agents/skills/_shared/principles.md` succeeds and the file is non-empty
   - If missing: stop and ask the user to confirm the install location of the shared references
 - REQUIRED: problem statement and constraints gathered
-  - Check: ask the user a "What problem does this backend solve?" question and confirm a non-empty answer
-  - If missing: stop and ask the user to provide the problem statement and constraints before proceeding
-- RECOMMENDED: `.opencode/everything-backend-memory/tech-stack.md` exists and is non-empty
-  - Check: `glob .opencode/everything-backend-memory/tech-stack.md`
-  - If missing: run `backend-scan` to populate memory, or proceed with project-only context if the user confirms
-- RECOMMENDED: `.opencode/everything-backend-memory/project-overview.md` exists
-  - Check: `glob .opencode/everything-backend-memory/project-overview.md`
-  - If missing: run `backend-scan` to populate memory, or proceed with project-only context if the user confirms
-- RECOMMENDED: `decisions.md` exists
-  - Check: `glob .opencode/everything-backend-memory/decisions.md`
-  - If missing: create an empty `decisions.md` on first use, or proceed without it
-- If any REQUIRED Check fails, run `backend-scan` with `mode=auto`, then re-run these checks. If the missing file is a project file (e.g., manifest, source dir) that `backend-scan` cannot create, stop and ask the user.
+  - Check: ask the user "What problem does this backend solve?" and confirm a non-empty answer
+  - If missing: stop and ask the user to provide the problem statement before proceeding
 
-## Required Context (load in order; stop if context budget is tight)
+## Required Context
 
-1. REQUIRED: `_shared/principles.md` → only Code/Architecture, API, System, Security sections
-2. REQUIRED: `tech-stack.md` (small, essential)
-3. REQUIRED: `project-overview.md`
-4. OPTIONAL: `db-schema.md` (only if touching data layer)
-5. OPTIONAL: `api-patterns.md` (only if designing endpoints)
-6. OPTIONAL: `decisions.md` (only if prior decisions matter)
-7. SKIP: `issues.md` unless reviewing risks
+See `_shared/context-loading.md` "Standard Required Context Priority List" for load order and fallback rules.
+Architecture work always loads `_shared/principles.md` (Code/Architecture, API, System, Security sections) and `decisions.md`.
 
 ## Architecture Process
 

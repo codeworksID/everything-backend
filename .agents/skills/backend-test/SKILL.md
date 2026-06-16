@@ -15,31 +15,15 @@ description: "Own the testing workflow for backend projects: design test strateg
 
 ## Prerequisites
 
-Before working with tests, confirm the following machine-checkable conditions:
+See `_shared/context-loading.md` for standard prerequisites (project root check, manifest detection, memory file presence, fallback rules, and context priority list).
 
-- REQUIRED: A manifest file has been read (`package.json`, `pyproject.toml`, `go.mod`, `pom.xml`, `build.gradle`, etc.).
-  - Check: `bash -c 'ls package.json pyproject.toml go.mod pom.xml build.gradle 2>/dev/null | head -1'`
-  - If missing: stop and ask the user for the correct project path that contains a known manifest
-- REQUIRED: A test runner has been detected from the manifest or configuration.
-  - Check: `bash -c 'ls package.json pyproject.toml go.mod pom.xml build.gradle 2>/dev/null | head -1' && grep -E "test|jest|pytest|go test" package.json pyproject.toml go.mod 2>/dev/null | head -1`
-  - If missing: stop and ask the user to confirm the test runner or run `backend-scan` to detect it
-- RECOMMENDED: Memory files exist in `.opencode/everything-backend-memory/`.
-  - Check: `glob .opencode/everything-backend-memory/*.md`
-  - If missing: run `backend-scan` to populate memory, or proceed with manifest-only context if the user confirms
-
-If any REQUIRED Check fails, run `backend-scan` with `mode=auto`, then re-run these checks. If the missing file is a project file (e.g., manifest, source dir) that `backend-scan` cannot create, stop and ask the user.
+Add this test-specific prerequisite on top:
+- REQUIRED: A test runner has been detected from the manifest or configuration (e.g., Jest, Vitest, pytest, `go test`, JUnit).
+  - If missing: stop and ask the user to confirm the test runner or run `backend-scan` to detect it.
 
 ## Required Context
 
-Read memory files in this priority order:
-
-1. `tech-stack.md` — languages, frameworks, test runners (highest priority)
-2. `api-patterns.md` — endpoints, contracts, error shapes
-3. `project-overview.md` — project type and module boundaries
-4. `db-schema.md` — tables, relationships, invariants
-5. `decisions.md` — architecture that affects testability
-
-If memory is stale, run `backend-scan` first.
+Follow the shared priority list in `_shared/context-loading.md` (Standard Required Context Priority List). For testing work, always load priority 6 (`test-strategy.md`) alongside the standard priorities 1-2. Load priority 4 (`api-patterns.md`) when writing contract or endpoint tests.
 
 ## mode=auto
 
@@ -271,36 +255,6 @@ Ask:
 
 ## Concurrent & Partial Work
 
-This skill participates in the shared checkpoint contract defined in `_shared/tool-rules.md` (Concurrent & Partial Work).
+Follow the shared checkpoint contract in `_shared/tool-rules.md` (Concurrent & Partial Work). This skill uses checkpoint path `.opencode/everything-backend-memory/.checkpoints/backend-test-<ISO-timestamp>.json`.
 
-### Checkpoint
-- File: `.opencode/everything-backend-memory/.checkpoints/backend-test-<ISO-timestamp>.json`
-- Required fields:
-  - `feature_slug`: user-provided or auto-derived identifier for the change set (e.g., `user-registration`, `order-cancel`).
-  - `started_at`: ISO-8601 timestamp.
-  - `completed_steps`: array of step names already finished.
-  - `pending_steps`: array of step names still to run.
-  - `generated_files`: array of file paths this run created or modified.
-  - `memory_updates`: array of memory files this run appended to.
-
-### Resume
-1. On start, run `glob .opencode/everything-backend-memory/.checkpoints/backend-test-*.json`.
-2. If a checkpoint exists, ask the user: "Resume from `<pending_steps[0]>` or start over?"
-   - In `mode=auto`, default to "resume" unless the checkpoint is older than 24 hours, in which case start over (and move the old checkpoint to `.checkpoints/archive/`).
-3. If resuming, re-load the checkpoint and skip `completed_steps`.
-4. Test runs are normally idempotent; a checkpoint is mostly useful when the user paused mid-test-authoring (not mid-execution).
-
-### Rollback
-1. Read the checkpoint's `generated_files` list.
-2. For each file, present `git checkout -- <file>` as the rollback command. Never run destructive deletions automatically.
-3. After the user confirms, run the listed `git checkout` commands and delete the checkpoint file.
-4. If a file was added (not just modified), suggest `git rm` or `rm` for the user to run, but do not execute it.
-
-### Multi-feature isolation
-- Every run MUST set a `feature_slug` before any write operation. If the user did not provide one, derive it from the first relevant file or ask.
-- Two concurrent runs of this skill with different `feature_slugs` must run in isolation — they do not share checkpoints or generated file lists.
-- Two concurrent runs with the SAME `feature_slug` are a collision: refuse to start and tell the user to either wait or pick a different slug.
-
-### Partial completion
-- If the run stops after some `generated_files` have been written but before all `pending_steps` finish, the checkpoint must still be saved.
-- On the next invocation, the resume step above applies. The user can pick which `pending_steps` to redo or skip.
+Test runs are normally idempotent, so checkpoints matter mainly when the user pauses mid-test-authoring (not mid-test-execution).

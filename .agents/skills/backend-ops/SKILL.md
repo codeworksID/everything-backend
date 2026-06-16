@@ -25,6 +25,15 @@ Read project memory for existing stack before recommending tools:
 
 If memory is stale or empty, suggest running `backend-scan` first.
 
+## Required Context
+
+Priority-ranked memory files to load before making operational recommendations:
+
+1. `decisions.md` — prior ops decisions (log levels, cache strategy, queue config)
+2. `tech-stack.md` — language, framework, and infrastructure choices that constrain tooling
+3. `api-patterns.md` — endpoint hot paths that need instrumentation and caching
+4. `project-overview.md` — architecture shape and service boundaries for tracing scope
+
 ## Operational Principles
 
 Apply the system and security principles in `_shared/principles.md` to operational design.

@@ -15,38 +15,34 @@ description: "Generate beautiful, themed Mermaid diagrams from database schemas,
 
 ## Prerequisites
 
-- REQUIRED: project root confirmed and readable
-  - Check: `bash -c 'test -d src || test -d app || test -d internal || test -d lib'`
-  - If missing: stop and ask the user for the correct project path
-- REQUIRED: `_shared/principles.md` loaded (Security section at minimum)
-  - Check: `read .agents/skills/_shared/principles.md | head -1`
-  - If missing: stop and ask the user to confirm the install location of the shared references
+See `_shared/context-loading.md` for standard prerequisites (project root check, manifest detection, memory file presence, fallback rules, and context priority list).
+
+Skill-specific prerequisites:
+
 - REQUIRED: diagram type chosen by user
   - Check: ask the user to pick from the diagram menu (ERD, Class, User/Actor, Flowchart, Sequence, Architecture) and confirm a non-empty choice
   - If missing: stop and ask the user to pick a diagram type before proceeding
-- RECOMMENDED: `.opencode/everything-backend-memory/tech-stack.md` exists and is non-empty
-  - Check: `glob .opencode/everything-backend-memory/tech-stack.md`
-  - If missing: run `backend-scan` to populate memory, or proceed with project-only context if the user confirms
-- RECOMMENDED: `.opencode/everything-backend-memory/project-overview.md` exists
-  - Check: `glob .opencode/everything-backend-memory/project-overview.md`
-  - If missing: run `backend-scan` to populate memory, or proceed with project-only context if the user confirms
-- RECOMMENDED: `db-schema.md` for ERD
+- RECOMMENDED: `db-schema.md` when the user picks ERD
   - Check: `glob .opencode/everything-backend-memory/db-schema.md`
-  - If missing: ask the user to provide a schema source (SQL DDL, ORM models, migration files, or a plain-text description) when the user picks ERD
-- RECOMMENDED: `project-overview.md` for architecture diagrams
+  - If missing: ask the user to provide a schema source (SQL DDL, ORM models, migration files, or a plain-text description)
+- RECOMMENDED: `project-overview.md` when the user picks Architecture
   - Check: `glob .opencode/everything-backend-memory/project-overview.md`
-  - If missing: ask the user to describe the system components and connections when the user picks an architecture diagram
-- If any REQUIRED Check fails, run `backend-scan` with `mode=auto`, then re-run these checks. If the missing file is a project file (e.g., manifest, source dir) that `backend-scan` cannot create, stop and ask the user.
+  - If missing: ask the user to describe the system components and connections
 
-## Required Context (load in order; stop if context budget is tight)
+## Required Context
 
-1. REQUIRED: `_shared/principles.md` → only relevant sections
-2. REQUIRED: `tech-stack.md` (small, essential)
-3. REQUIRED: `project-overview.md`
-4. OPTIONAL: `db-schema.md` (essential for visualize)
-5. OPTIONAL: `api-patterns.md`
-6. OPTIONAL: `decisions.md` (only if prior decisions matter)
-7. SKIP: `issues.md` unless reviewing risks
+Follow the shared priority list in `_shared/context-loading.md` (load `project-overview.md` and `tech-stack.md` first; others lazily).
+
+Diagram-specific sources:
+
+| Diagram Type | Key Sources |
+|---|---|
+| ERD | `db-schema.md`, SQL DDL, ORM models, migration files |
+| Class Diagram | ORM models, domain entities, `db-schema.md` |
+| Architecture | `project-overview.md`, `tech-stack.md` |
+| Sequence | `api-patterns.md`, route/controller files |
+| Flowchart | User description or `project-overview.md` |
+| User/Actor | `project-overview.md`, auth/role files |
 
 ## Visualization Process
 
