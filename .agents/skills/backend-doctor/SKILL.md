@@ -19,7 +19,7 @@ See `_shared/context-loading.md` for standard prerequisites (project root check,
 Doctor-specific prerequisites:
 
 - **REQUIRED**: `issues.md` must be loaded alongside the standard priority files. Health checks use it to validate whether known issues have regressed or been resolved.
-- If any standard prerequisite fails, follow the recovery rules in `_shared/context-loading.md` (run `backend-scan` with `mode=auto`, then re-check). If the missing file is a project file that `backend-scan` cannot create, stop and ask the user.
+- If any standard prerequisite fails, follow the recovery rules in `_shared/context-loading.md` (run `backend-scan` with `mode=auto`, then re-check). If the missing file is a project file that `backend-scan` cannot create, stop and ask the user. A missing `_shared/` file is not a failure: warn once and continue (see `_shared/context-loading.md` → Resolving `_shared/` Files).
 
 ## Context Loading
 
@@ -53,7 +53,23 @@ Ranked by priority for a health-check run:
 
 ### mode=auto
 
-If the user says "run doctor" or "check my backend", proceed through the prerequisites and checks without asking for confirmation. Only pause to ask when a finding requires a risky fix (for example, deleting data, rotating secrets, or running a destructive migration).
+Follow the shared `mode=auto` contract in `_shared/tool-rules.md`.
+
+If the user says "run doctor" or "check my backend", proceed through the prerequisites and checks without asking for confirmation, within these limits:
+
+- Doctor diagnoses and reports. It does not edit source, tests, config, or manifests, and it does not install, upgrade, or remove dependencies in `mode=auto`.
+- Every finding names the skill that owns the fix (**Next skill**, e.g. `backend-implement`, `backend-test`, `backend-auth`, `backend-migrate`, `backend-deploy`). Fixes are applied by that skill, or by doctor only after the user confirms the specific fix.
+- Run tests and start the app only after the Target Check below passes; otherwise ask.
+- Long commands follow `_shared/tool-rules.md` → Command Time Budgets.
+
+### Target Check
+
+Before running the test suite (Check 1) or starting the app (Check 4), inspect the env files and config the process will load (`.env`, `.env.test`, config files, `docker-compose*.yml`, and the current shell environment) for database, queue, cache, mail, and external-API targets, e.g. `DATABASE_URL`, `DB_HOST`, `REDIS_URL`, `AMQP_URL`/`RABBITMQ_URL`, `KAFKA_BROKERS`, `SMTP_HOST`, payment or email provider keys.
+
+- Proceed automatically only if every target is provably local (see `_shared/tool-rules.md` → Production Targets): `localhost`, `127.0.0.1`, `::1`, `*.localhost`, a container this run started, or a file database under a temp directory. Names containing `dev`, `staging`, or `test` are not proof.
+- The check applies to every test command unless it provably runs only hermetic unit tests (a dedicated unit script or path that loads no `.env` or DB/queue config). `npm test`, `npm run test:ci`, `pytest`, `go test ./...`, and `./mvnw test` count as integration runs.
+- Also check whether app startup or the test run migrates, resets, or seeds a database automatically: app hooks (a `prestart` script, a migrate-on-boot setting) and test hooks (npm `pretest`, which `npm test` runs automatically; Jest/Vitest `globalSetup`/`setupFiles`; pytest `conftest.py` fixtures; Go `TestMain`), e.g. `prisma migrate reset --force`, `prisma db push`, `knex migrate:latest`, `alembic upgrade head`. If any does, ask first even for a local database (see `_shared/tool-rules.md` → Always Ask First).
+- If any target is not provably local, skip that check, record it in the report as "not run: non-local target <name>", and ask whether to run it.
 
 ## Detecting the Right Commands
 
@@ -75,7 +91,7 @@ All checks must produce observable evidence (exit codes, command output, file pa
 
 ### 1. Run the Test Suite
 
-Use `bash` to execute the detected test command.
+Use `bash` to execute the detected test command. Run it only after the Target Check passes, unless the command is provably unit-only; the default commands below run the whole suite and are not.
 
 Examples:
 - Node.js: `npm test` or `npm run test:ci`
@@ -133,7 +149,7 @@ Severity:
 
 ### 4. Smoke Test the Running Application
 
-If the project exposes a start command and a health/readiness endpoint, start the app with `bash`, wait for it to listen, then probe the endpoint.
+If the project exposes a start command and a health/readiness endpoint, and the Target Check passes, start the app with `bash`, wait for it to listen, then probe the endpoint. If the Target Check does not pass, do not start the app; report the smoke test as "not run" with the non-local target and ask.
 
 Example flow:
 1. Start server in the background: `npm start`, `python -m <module>`, `go run ./cmd/server`, etc.
@@ -183,8 +199,9 @@ Every reported finding must be backed by evidence:
 4. **Severity and category** from the rules below.
 5. **Why it violates a backend principle**.
 6. **Recommendation or minimal fix** with a code example when useful.
+7. **Next skill**: the skill that owns the fix (doctor does not apply it in `mode=auto`).
 
-If a required tool is missing, times out, or fails to run, follow `_shared/tool-rules.md`: report the exact error as a **Medium** finding under "Tooling", capture the timeout duration or exit code, and try an alternative command from the Default Investigation Toolkit when available.
+If a required tool is missing or fails to run, follow `_shared/tool-rules.md`: report the exact error as a **Medium** finding under "Tooling", capture the exit code, and try an alternative command from the Default Investigation Toolkit when available. Time limits follow `_shared/tool-rules.md` → Command Time Budgets; a check that exceeds its budget is reported as "did not complete" with the elapsed time, never as passing.
 
 ## Severity Rules
 
@@ -194,6 +211,8 @@ If a required tool is missing, times out, or fails to run, follow `_shared/tool-
 - **Low**: naming, documentation, minor duplication, non-critical observability gaps, cosmetic linter warnings.
 
 ## Decision Trees
+
+These are recommendations for the report. Doctor applies none of them in `mode=auto`; each goes to its **Next skill**, or is applied by doctor only after the user confirms that specific fix.
 
 ### If security issues found:
 - Prioritize Critical and High severity.
@@ -213,15 +232,15 @@ If a required tool is missing, times out, or fails to run, follow `_shared/tool-
 - Add missing tests and documentation.
 
 ### If dependency issues found:
-- Update vulnerable packages.
-- Remove unused dependencies.
-- Pin versions for stability.
-- Check for breaking changes.
-- Add automated dependency scanning.
+- Recommend upgrades for vulnerable packages, naming the fixed version and any breaking changes.
+- Recommend removing unused dependencies.
+- Recommend pinning versions for stability.
+- Recommend automated dependency scanning (Next skill: `backend-deploy` for CI).
+- Installing, upgrading, or removing a dependency always needs confirmation (see `_shared/tool-rules.md` → Always Ask First).
 
 ## Health Report Template
 
-```markdown
+````markdown
 # Backend Health Report
 
 **Date**: [ISO timestamp]
@@ -251,6 +270,7 @@ If a required tool is missing, times out, or fails to run, follow `_shared/tool-
 - **Description**: Raw SQL query with string concatenation
 - **Impact**: Attacker can read/modify any data, bypass authentication
 - **Recommendation**: Use parameterized queries
+- **Next skill**: `backend-implement`
 - **Example Fix**:
   ```typescript
   // Before (VULNERABLE)
@@ -271,6 +291,7 @@ If a required tool is missing, times out, or fails to run, follow `_shared/tool-
 - **Description**: Login endpoint returns 200 for invalid credentials.
 - **Impact**: Auth bypass risk.
 - **Recommendation**: Verify password hash comparison and reject invalid credentials.
+- **Next skill**: `backend-auth`
 
 ## Medium Issues (Plan to Fix)
 
@@ -280,6 +301,7 @@ If a required tool is missing, times out, or fails to run, follow `_shared/tool-
 - **Category**: Observability
 - **Evidence**: Smoke test `curl http://localhost:3000/health` returned `404 Not Found`.
 - **Recommendation**: Add `/health` and `/ready` endpoints.
+- **Next skill**: `backend-implement`
 
 ## Low / Recommendations (Consider)
 
@@ -289,6 +311,7 @@ If a required tool is missing, times out, or fails to run, follow `_shared/tool-
 - **Category**: Quality
 - **Evidence**: Route handler does not import any validation library.
 - **Recommendation**: Add Zod/Pydantic validation for request bodies.
+- **Next skill**: `backend-implement`
 
 ## Scores by Category
 | Category | Score | Notes |
@@ -305,7 +328,7 @@ If a required tool is missing, times out, or fails to run, follow `_shared/tool-
 - **Dependency Direction**: [Good / Mixed / Poor]
 - **Transaction Ownership**: [Good / Mixed / Poor]
 - **Normalization / Data Integrity**: [Good / Mixed / Poor]
-```
+````
 
 ## Edge Cases
 

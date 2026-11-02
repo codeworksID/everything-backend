@@ -193,6 +193,7 @@ Key architecture and design decisions with context, consequences, and status.
 - Append new decisions; do not overwrite existing ones.
 - Update the status of a decision when it changes.
 - Mark deprecated decisions clearly and link to the replacement if applicable.
+- When a new decision replaces an Accepted one, set the old decision's status to Deprecated and add `Superseded by: [YYYY-MM-DD] [Decision Title]` under its `### Status`.
 
 ### Example entry
 ```markdown
@@ -304,12 +305,20 @@ Live code wins. If the live project artifacts conflict with the memory file:
 
 ### Compaction rule
 
-Keep only the last **5** timestamped entries per memory file. To compact:
+Compaction applies only to timestamped history entries. These entries are **never archived**, regardless of age or count:
 
-1. Copy older entries to `.opencode/everything-backend-memory/archive/<file>-<YYYY-MM-DD>.md`, where `<file>` is the original memory filename without extension and `<YYYY-MM-DD>` is the date of the oldest archived entry.
-2. Prune the archived entries from the live memory file.
-3. Update `## Last Updated` to reflect the compaction.
+- the latest current-state entry of a file: the most recent entry holding the full inventory (e.g., the `Initial Scan` or latest full-scan entry in `project-overview.md`, `tech-stack.md`, `api-patterns.md`, `db-schema.md`);
+- issues with status Open or In Progress;
+- decisions with status Accepted that are not superseded, meaning no later decision names them in a `Superseded by:` line or as replaced (and Proposed decisions still awaiting a choice). Deprecated and superseded decisions may be archived.
+
+Of the remaining entries, keep the last **5** in the live file. To compact:
+
+1. If any entry to be archived is a delta newer than the current-state entry, first write a new consolidated current-state entry (`## [YYYY-MM-DD HH:MM] Current State (compacted)`) that merges the old inventory with those deltas. The old inventory and the merged deltas then become archivable.
+2. Copy the entries to archive into `.opencode/everything-backend-memory/archive/<file>-<YYYYMMDDTHHMMSSZ>.md`, where `<file>` is the memory filename without extension and the timestamp is the UTC compaction time (no colons). If that name already exists, append `-2`, `-3`, … ; never overwrite an archive file.
+3. Read the archive file back and confirm it contains every archived entry before pruning.
+4. Prune the archived entries from the live memory file.
+5. Update `## Last Updated` to reflect the compaction.
 
 ### Memory file size guard
 
-If a memory file exceeds approximately **200 KB**, trigger compaction automatically. Check the file size before appending a new entry, and archive/prune older entries until the file is under the guard threshold while retaining the most recent 5 entries at minimum.
+If a memory file exceeds approximately **200 KB**, trigger compaction automatically. Check the file size before appending a new entry, and archive/prune older entries until the file is under the guard threshold while retaining the most recent 5 entries at minimum and every entry the Compaction rule never archives. If the file is still over the threshold, report it instead of archiving protected entries.

@@ -13,6 +13,8 @@ description: "Design database schemas including table structures, relationships,
 - Need to add new tables/collections
 - User asks "what database should I use?"
 
+> **Boundary**: This skill designs the target schema and a migration PLAN. It does not write or apply migration files; hand the plan to `backend-migrate`, which is the only skill that writes and applies migrations.
+
 ## Prerequisites
 
 See `_shared/context-loading.md` for standard prerequisites (project root check, manifest detection, shared file presence, memory fallback, and staleness rules).
@@ -23,6 +25,8 @@ See `_shared/context-loading.md` for standard prerequisites (project root check,
   - Check: ask the user "What data do you need to store?" and confirm at least one entity is identified
   - If missing: stop and ask the user to confirm the data storage need and at least one entity
 - REQUIRED: `_shared/principles.md` loaded (especially the database and security sections)
+  - Check: resolve `_shared/principles.md` as described in `_shared/context-loading.md` → Resolving `_shared/` Files (sibling of this skill's folder first)
+  - If missing: warn once and continue with this skill's own rules; do not stop
 - RECOMMENDED: `db-schema.md` exists
   - Check: `glob .opencode/everything-backend-memory/db-schema.md`
   - If missing: create an empty `db-schema.md` and append the new schema after this design is approved
@@ -178,13 +182,24 @@ erDiagram
 
 ### Step 5: Migration Planning
 
-For each schema change:
+Produce a migration plan, not migration files. For each schema change, list:
 
-1. **Create migration file** with timestamp prefix
-2. **Define up and down** migrations
-3. **Plan data migration** if changing existing data
-4. **Test migration** on staging
-5. **Plan rollback** strategy
+1. **Change**: the target DDL intent (new table, new column, new index, constraint, rename, type change, drop)
+2. **Kind**: additive (new tables/nullable columns/indexes) or existing-table change that needs expand/contract
+3. **Data movement**: any backfill or transform of existing rows
+4. **Order and dependencies**: which changes must precede others (parent tables before FKs, expand before code switch)
+5. **Rollback intent**: how each change would be reversed, or why it cannot be
+
+Example migration plan (handed to `backend-migrate`):
+```markdown
+| # | Change | Kind | Data movement | Depends on | Rollback intent |
+|---|--------|------|---------------|------------|-----------------|
+| 1 | Create `users` | additive | none | - | drop table |
+| 2 | Create `posts` with FK to `users` | additive | none | 1 | drop table |
+| 3 | Add `users.role` with default `'user'` | existing table, constant default | none | 1 | drop column |
+```
+
+Then hand the target schema and this plan to `backend-migrate`, which writes the migration files with the project's tool, applies lock-safe and expand/contract rules, and applies them only after Always Ask First (`_shared/tool-rules.md` → Always Ask First).
 
 ### Step 5.5: Transaction and Constraint Design
 
@@ -204,14 +219,6 @@ For each write-heavy or critical workflow, define:
 4. **Denormalization policy**
    - If storing duplicated or computed data, document why and how it stays correct
 
-Example migration structure:
-```
-migrations/
-├── 20260613_001_create_users.sql
-├── 20260613_002_create_posts.sql
-├── 20260613_003_add_user_role.sql
-```
-
 ### Step 6: User Confirmation
 
 Present schema design:
@@ -230,6 +237,8 @@ Ask:
 - "Any normalization concerns?"
 - "Should any denormalization be justified for performance, or should we keep strict 3NF?"
 - "Should I save this to db-schema.md memory?"
+
+After approval, hand the target schema and migration plan to `backend-migrate`.
 
 ## Decision Trees
 
@@ -264,6 +273,22 @@ Ask:
 - `audit_log` table
 - Columns: entity_type, entity_id, action, user_id, old_value, new_value, timestamp
 - Consider append-only storage
+
+### If multi-tenant (SaaS) needed:
+- Decide the tenancy model first and record it in `decisions.md`: shared tables with `tenant_id` (default), schema-per-tenant, or database-per-tenant
+- Shared tables: `tenant_id NOT NULL` with an FK to `tenants` on every tenant-owned table, including child and junction tables
+- Unique constraints include `tenant_id`: `UNIQUE (tenant_id, email)`, not `UNIQUE (email)`
+- Indexes lead with `tenant_id` for tenant-scoped query patterns: `(tenant_id, status, created_at DESC)`
+- FKs between tenant-owned tables include `tenant_id` so a child cannot point at another tenant's parent: `FOREIGN KEY (tenant_id, post_id) REFERENCES posts (tenant_id, id)` (requires `UNIQUE (tenant_id, id)` on the parent)
+- Every query is scoped by `tenant_id` taken from the verified auth context, never from the request body or path; enforce it in a tenant-scoped repository/query layer, and scope admin roles to a tenant unless a platform-admin role is explicitly designed
+- PostgreSQL option: row-level security as a second layer
+  ```sql
+  ALTER TABLE posts ENABLE ROW LEVEL SECURITY;
+  CREATE POLICY tenant_isolation ON posts
+    USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
+  ```
+  `NULLIF` matters: on a pooled connection where the setting was set in an earlier transaction, it reads back as `''`, and `''::uuid` errors; with `NULLIF` an unset tenant returns no rows. The app role must not be a superuser and must not have `BYPASSRLS`; if it also owns the table, add `ALTER TABLE ... FORCE ROW LEVEL SECURITY`. Set the tenant per transaction with a parameterized `SELECT set_config('app.tenant_id', $1, true)` (transaction-local, so pooled connections do not leak it), not `SET LOCAL` with an interpolated literal
+- Require cross-tenant access tests: tenant A cannot read, update, or delete tenant B's rows by ID, and list/search endpoints return only the caller's tenant
 
 ## Templates
 
@@ -384,6 +409,6 @@ erDiagram
 - **High read load**: Consider read replicas, caching, denormalization
 - **Time-series data**: Consider TimescaleDB, InfluxDB
 - **Search-heavy**: Consider Elasticsearch, Meilisearch alongside primary DB
-- **Multi-tenant**: Add tenant_id to all tables, consider schema-per-tenant
+- **Multi-tenant**: Follow Decision Trees → If multi-tenant (SaaS) needed (tenant_id keys, tenant-scoped queries, optional RLS, cross-tenant tests)
 - **Premature denormalization**: Keep 3NF until measurement proves a bottleneck
 - **Cross-table business rule**: Enforce local invariants in DB constraints and cross-aggregate rules in application transactions

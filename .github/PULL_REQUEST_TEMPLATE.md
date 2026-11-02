@@ -31,6 +31,7 @@
 - [ ] `backend-visualize`
 - [ ] `backend-api-design`
 - [ ] `backend-implement`
+- [ ] `backend-refactor`
 - [ ] `backend-test`
 - [ ] `backend-auth`
 - [ ] `backend-ops`
@@ -44,7 +45,8 @@
 
 <!-- Describe the tests you ran. If you can't test, explain why. -->
 
-- [ ] I ran `node scripts/install.js --dry-run` and reviewed the output
+- [ ] I ran `node scripts/install.js --dry-run --target ./tmp-skills` and reviewed the output
+- [ ] I ran `npm run check` and it passed
 - [ ] I installed the skills into a real project and exercised the change
 - [ ] I added or updated tests
 - [ ] No tests added — explain why below

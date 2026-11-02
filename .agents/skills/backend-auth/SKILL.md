@@ -20,8 +20,8 @@ See `_shared/context-loading.md` for standard prerequisites (project root check,
 Auth-specific prerequisites on top of the standard set:
 
 - **REQUIRED**: `_shared/principles.md` loaded, **Security section mandatory**
-  - Check: `read .agents/skills/_shared/principles.md` and verify the `## Security` section is present
-  - If missing: stop and ask the user to confirm the install location of the shared references. The Security section is non-negotiable for auth work.
+  - Check: resolve `_shared/principles.md` as described in `_shared/context-loading.md` → Resolving `_shared/` Files (sibling of this skill's folder first), and verify the `## Security` section is present
+  - If missing: warn once and continue with this skill's own rules; do not stop. This skill's JWT verification, Security Defaults, CSRF protection, and Session hardening sections are then the security baseline.
 - **REQUIRED**: identity/authorization scope is confirmed (human users, service accounts, OAuth, etc.)
   - Check: ask the user "Who is the principal: human users, service accounts, or both?" and confirm a non-empty answer
   - If missing: stop before proceeding
@@ -50,6 +50,7 @@ Choose the mechanism that matches the client and threat model.
 - **Pros**: easy revocation, opaque to clients, no token parsing logic
 - **Cons**: needs sticky sessions or shared session store; less portable to mobile/third-party
 - **Storage**: `httpOnly`, `Secure`, `SameSite=Lax|Strict` cookie with a session ID
+- **Hardening**: regenerate the ID on login, set idle and absolute timeouts, add CSRF protection (see Session hardening and CSRF protection)
 
 ### Token-based (JWT / opaque)
 - **When**: stateless APIs, SPAs, mobile, microservices
@@ -76,9 +77,10 @@ Include only what the service needs:
 - `sub`: user or service account ID
 - `iss`: issuer
 - `aud`: intended audience(s)
-- `iat`, `exp`: issued-at and expiration
+- `iat`, `exp`, `nbf`: issued-at, expiration, not-before
 - `jti`: unique token ID for revocation lists
 - Custom claims: `roles`, `permissions`, `tenant_id` (keep small)
+- Never put secrets or sensitive data (PII beyond the subject ID, internal flags) in the payload: a signed JWT is base64url-encoded, not encrypted
 
 ```typescript
 // Example access token payload (short-lived)
@@ -93,8 +95,21 @@ Include only what the service needs:
 }
 ```
 
+### JWT verification
+Every service that accepts a JWT verifies it locally with a maintained library (`jose` for Node, PyJWT for Python, `github.com/golang-jwt/jwt/v5` for Go, Spring Security / Nimbus JOSE+JWT for Java). Never decode-and-trust or hand-roll signature checks.
+
+- **Pin algorithms server-side**: pass an explicit allowlist and never accept `none`. Never let the token header choose the algorithm or key type; each key is bound to one algorithm, so an RSA/EC public key is never accepted as an HMAC secret (alg confusion).
+  - `jose`: `jwtVerify(token, key, { algorithms: ['ES256'], issuer, audience, clockTolerance: '30s' })`
+  - PyJWT: `jwt.decode(token, key, algorithms=["ES256"], issuer=..., audience=..., leeway=30, options={"require": ["exp", "iss", "aud", "sub"]})`
+  - golang-jwt v5: `jwt.Parse(token, keyFunc, jwt.WithValidMethods([]string{"ES256"}), jwt.WithIssuer(iss), jwt.WithAudience(aud), jwt.WithExpirationRequired(), jwt.WithLeeway(30*time.Second))`
+- **Verify every claim**: signature, `iss` (exact match), `aud` (contains this service), `exp` (required), `nbf` (if present), with clock-skew leeway of 60 seconds or less.
+- **Token type**: when the issuer sets `typ: at+jwt` (RFC 9068), require it, so an OIDC ID token is never accepted as an API access token.
+- **`kid` and JWKS**: look up `kid` only in the issuer's JWKS fetched from a configured URL, never from `jku`, `x5u`, or `jwk` header values. Cache the JWKS. On an unknown `kid`, refresh once with a rate limit (e.g. at most one refetch per 30-60 s), then reject. `jose` `createRemoteJWKSet` caches and rate-limits refetches (`cooldownDuration`, default 30 s). PyJWT `PyJWKClient` caches the JWK set (`lifespan`) but refetches on every unknown `kid`, so wrap it with your own cooldown or reject unknown kids between refreshes.
+- **Keys**: prefer asymmetric algorithms (ES256, EdDSA, or RS256 with 2048-bit or larger keys) whenever any service other than the issuer verifies tokens; only the issuer holds the private key. Use HS256 only when the issuer and the verifier are the same service, with a secret of at least 256 bits from a CSPRNG (not a passphrase), loaded from a secret manager.
+- **Failures**: map every verification failure to 401 with a generic message; log the reason server-side without the token.
+
 ### Expiration guidelines
-- Access tokens: 5–60 minutes
+- Access tokens: 5–15 minutes (short, because a JWT stays valid until `exp` unless denylisted)
 - Refresh tokens: 7–90 days, or single-session lifetime
 - Password-reset / magic-link tokens: 15–60 minutes
 - Email-verification tokens: 24 hours
@@ -107,17 +122,18 @@ Use opaque tokens when:
 
 ### Refresh rotation
 - Issue a new refresh token on every access-token refresh
-- Invalidate the previous refresh token (detect reuse = likely theft)
-- Store refresh-token family and expiration server-side
+- Invalidate the previous refresh token in the same transaction
+- Store refresh-token family, hash (never the raw token), and expiration server-side
+- Reuse detection: if an already-rotated refresh token is presented, treat it as theft and revoke the whole family, forcing re-login
 
 ### Revocation
-- Maintain a blocklist of `jti` + `exp` for JWTs you want to revoke before expiry
+- High-risk revocation before expiry (compromised account, admin action): add the `jti` to a denylist (e.g. Redis) with a TTL equal to the token's remaining lifetime, checked on every verification
 - For opaque/refresh tokens, delete or mark revoked in the datastore
-- Revoke all tokens on password change, MFA enrollment, or suspicious activity
+- Revoke all tokens on password change, MFA enrollment, or suspicious activity: revoke every refresh-token family for the user and either denylist outstanding access tokens or reject tokens issued before a per-user `tokens_valid_after` timestamp checked against `iat`
 
 ### Token storage
 - **First-party web**: `httpOnly`, `Secure`, `SameSite=Lax|Strict` cookies; set `Path` and consider `__Host-` prefix
-- **SPAs with separate API domain**: same-site `None` + `Secure` only if needed; prefer same-site architecture
+- **SPAs with separate API domain**: same-site `None` + `Secure` only if needed, and then CSRF protection is mandatory (see CSRF protection); prefer same-site architecture
 - **Mobile**: Keychain / Keystore
 - **Never**: localStorage for sensitive tokens in production web apps
 
@@ -169,13 +185,27 @@ ph.verify(hash, password)
 ### Resource ownership
 - Always verify the actor owns or is explicitly granted access to the resource
 - Do not rely solely on route params; re-check in the service layer
+- In multi-tenant systems, check the tenant first, then owner or role
 
 ```typescript
-// Example ownership check
-if (resource.ownerId !== currentUser.id && !currentUser.isAdmin()) {
+// Example tenant-scoped ownership check (service layer)
+// principal comes from the verified token/session, never from the body, query, or headers
+const resource = await repo.findById(principal.tenantId, id); // query filters by tenant_id
+if (!resource || resource.tenantId !== principal.tenantId) {
+  throw new NotFoundError(); // do not reveal that another tenant's resource exists
+}
+// principal.roles are tenant-scoped claims (see the authenticate middleware below)
+if (resource.ownerId !== principal.userId && !principal.roles.includes('admin')) {
   throw new ForbiddenError();
 }
 ```
+
+### Tenant isolation
+- Take `tenant_id` only from the authenticated principal (verified token claim or server-side session). Ignore tenant IDs in the body, query, or headers such as `X-Tenant-ID`, unless the server checks that the principal is a member of that tenant
+- Filter every query on tenant-owned tables by `tenant_id` through a tenant-scoped repository, or enforce it with Postgres row-level security. With RLS, set the tenant at the start of each transaction with the parameterized `SELECT set_config('app.tenant_id', $1, true)` (`true` = transaction-local, like `SET LOCAL`; `SET` cannot take bind parameters, so never build it by string interpolation), and write policies as `tenant_id = current_setting('app.tenant_id', true)::uuid` so a missing setting yields NULL and matches no rows. Never use session-level `SET` on pooled connections. Superusers and `BYPASSRLS` roles skip RLS, and table owners do unless `FORCE ROW LEVEL SECURITY` is set, so the app must not connect as any of them
+- Roles are tenant-scoped: an admin in tenant A has no rights in tenant B. Keep any platform-wide operator role separate, MFA-protected, and audited
+- Add negative tests: a user in tenant A cannot read, list, update, or delete tenant B's resources
+- RLS policies and `tenant_id` columns are schema changes: hand them to `backend-migrate`
 
 ### Permission checks
 - Prefer a single authorization service/gate that knows roles, policies, and ownership
@@ -187,6 +217,7 @@ if (resource.ownerId !== currentUser.id && !currentUser.isAdmin()) {
 ### 1. User identity model
 - Store: id, email (unique, verified), password_hash, MFA secret (encrypted), lockout state, timestamps
 - Add indexes on email and any lookup used during login
+- Schema changes (user, token, MFA and lockout tables, indexes, RLS policies) are designed with `backend-db-design` and written and applied only by `backend-migrate`; this skill does not write or apply migrations
 
 ### 2. Registration and login endpoints
 - Validate and normalize email
@@ -195,24 +226,34 @@ if (resource.ownerId !== currentUser.id && !currentUser.isAdmin()) {
 - Return consistent errors whether the user exists or not to prevent enumeration where acceptable
 
 ### 3. Middleware design
-- `authenticate`: validate token/session and attach `currentUser` / `currentSession`
+- `authenticate`: validate token/session and attach the verified principal (user ID, tenant ID, roles)
 - `requireAuth`: reject anonymous requests
 - `requireRole(role)` / `requirePermission(permission)`: RBAC gate
 
 ```typescript
 // Example middleware shape
+// Express 5 forwards rejected promises to the error middleware; Express 4 does not,
+// so keep the try/catch + next(err) there (or wrap the handler).
 async function authenticate(req, res, next) {
-  const token = extractBearerOrCookie(req);
-  const session = await verifyToken(token);
-  req.context = { currentUser: session.user };
-  next();
+  try {
+    const token = extractBearerOrCookie(req);
+    if (!token) return next(); // anonymous; requireAuth rejects it later
+    const claims = await verifyAccessToken(token); // algorithm allowlist, iss, aud, exp/nbf (see JWT verification)
+    req.context = {
+      principal: { userId: claims.sub, tenantId: claims.tenant_id, roles: claims.roles },
+    };
+    next();
+  } catch (err) {
+    // Invalid or expired token -> 401; infrastructure errors (e.g. JWKS fetch) -> error middleware
+    next(isTokenVerificationError(err) ? new UnauthorizedError() : err);
+  }
 }
 ```
 
 ### 4. Current-user injection
-- Pass `currentUser` through request context to services
-- Services perform ownership and permission checks
-- Do not trust client-sent user IDs
+- Pass the principal through request context to services
+- Services perform tenant, ownership, and permission checks
+- Do not trust client-sent user or tenant IDs
 
 ### 5. Protected routes
 - Apply authentication middleware at route level
@@ -239,13 +280,34 @@ Apply the security principles in `_shared/principles.md` to every auth flow, the
 - Set `Strict-Transport-Security`, `X-Content-Type-Options`, `X-Frame-Options`
 
 ### CORS
-- Restrict allowed origins to known domains
-- Do not use `*` with credentials
+- Restrict allowed origins to an exact-match allowlist of known domains
+- Do not use `*` with credentials, never reflect the request `Origin` back, and never allow the `null` origin
 - Keep `Access-Control-Allow-Credentials` intentional, not default-on
 
+### CSRF protection
+Required whenever the browser attaches credentials automatically: session cookies, JWTs in cookies, HTTP Basic.
+- Baseline: `SameSite=Lax` or `Strict` on auth cookies. With `Lax`, GET still rides top-level navigations, so GET must never change state. SameSite does not stop same-site attackers (e.g. a compromised sibling subdomain)
+- On every state-changing request (POST, PUT, PATCH, DELETE), add one of:
+  - Synchronizer token: per-session random token stored server-side, sent in a header or form field, compared in constant time
+  - Signed double-submit cookie: token HMAC-bound to the session ID. A plain, unsigned double-submit cookie can be bypassed by cookie injection
+  - Origin verification: reject when `Sec-Fetch-Site` is `cross-site`, or when `Origin` (falling back to `Referer`) is not in the allowlist; reject when both headers are missing
+- `SameSite=None` cookies must use a CSRF token (synchronizer or signed double-submit), not SameSite alone
+- Protect the login form too (login CSRF)
+- Prefer the framework's built-in protection (Django `CsrfViewMiddleware`, Spring Security CSRF). The `csurf` npm package is deprecated; do not use it
+- APIs that take credentials only from an `Authorization: Bearer` header set by client code are not exposed to CSRF and need no CSRF token, but CORS must not allow credentials for arbitrary origins
+
+### Session hardening
+- Session IDs: at least 128 bits from a CSPRNG (framework session stores do this by default); never accept a client-chosen ID
+- Regenerate the session ID on login and on any privilege change (role change, MFA step-up, sudo mode) to prevent session fixation
+- Enforce an idle timeout (e.g. 15–30 minutes for admin or sensitive apps) and an absolute timeout (e.g. 8–24 hours) server-side, not only through cookie `Max-Age`
+- Name session cookies with the `__Host-` prefix (requires `Secure`, `Path=/`, and no `Domain`) plus `HttpOnly` and `SameSite`
+- On logout, destroy the session server-side (or revoke the refresh-token family), then clear the cookie; clearing the cookie alone is not logout
+- On password change or reset, invalidate all of the user's other sessions
+
 ### Secrets and configuration
-- Read signing keys, pepper values, and client secrets from environment variables
-- Rotate signing keys periodically and support key IDs (`kid`) in JWT headers
+- Load signing keys, pepper values, and client secrets from a secret manager (directly or injected as environment variables at deploy time); never from source or image layers
+- HS256 secrets: at least 256 bits from a CSPRNG. Prefer asymmetric keys (RS256, ES256, EdDSA) whenever services other than the issuer verify tokens (see JWT verification)
+- Rotate signing keys periodically: publish the new public key in the JWKS before signing with it, sign with a new `kid`, and keep the old key until all tokens it signed have expired
 - Never commit secrets or test credentials
 
 ## Decision Trees
@@ -259,8 +321,8 @@ Apply the security principles in `_shared/principles.md` to every auth flow, the
 ### Single-Page Application (SPA)
 1. Backend-for-frontend or same-site API
 2. Short-lived access token in `httpOnly` cookie
-3. Refresh token rotation
-4. CSRF protection if using cookie-based sessions
+3. Refresh token rotation with reuse detection
+4. CSRF protection, because the credentials are in cookies (see CSRF protection)
 
 ### Mobile application
 1. OAuth 2.0 + PKCE or opaque refresh tokens
@@ -271,11 +333,11 @@ Apply the security principles in `_shared/principles.md` to every auth flow, the
 ### Microservices
 1. End-user identity carried in short-lived JWT
 2. Service-to-service identity via mTLS or scoped service tokens
-3. Each service validates signature/audience independently
+3. Each service verifies tokens independently with the issuer's public keys from a cached JWKS (see JWT verification); never share an HS256 secret across services
 4. Centralize user/session lookup only where needed
 
 ### Admin / ERP dashboard
-1. Session cookies with strong flags
+1. Session cookies with strong flags, CSRF protection, ID regeneration, and idle/absolute timeouts (see Session hardening)
 2. RBAC with explicit permission matrix
 3. MFA required for admin roles
 4. Audit log for privileged actions

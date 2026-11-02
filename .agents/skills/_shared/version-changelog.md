@@ -22,6 +22,18 @@
 - **Step-number cleanup**: normalized `backend-api-design` to use `Step 1.5` for tool-assisted discovery and `Step 1.6` for API principles.
 - **deploy section transition fix**: smoothed awkward handoff between deploy steps that jumped out of order.
 
+### Fixed (P0 audit, 2026-11-02; IDs refer to docs/audit/2026-10-31-findings-detail.md)
+
+- **Installer restored** (`scripts/install.js`) with repo-root/dry-run fix, Cursor target `~/.cursor/skills`, versioned Antigravity `plugin.json`; new `scripts/check-package.js` runs on `prepublishOnly` (F001, F073, F216).
+- **`_shared/` resolution** relative to the installed skill folder; a missing shared doc warns instead of stopping (F018).
+- **`mode=auto` contract** is now an allowlist with Always Ask First, Production Targets and Test Integrity; `mode=interactive` defined (F002, F042, F053, F084, C015).
+- **Rollback** reverse-applies the run's own patches; never `git checkout --`/`reset --hard`/`clean`; colon-free checkpoint names keyed on feature slug (F045, F046, F089, F017).
+- **Command Time Budgets** replace the blanket 30 s timeout (F049).
+- **Compaction** never archives current state, open issues or accepted decisions; collision-free archive names (F014, C005).
+- **Migrations**: dual-write rename, safe NOT NULL, lock/statement timeouts, CONCURRENTLY outside transactions, constraints carried on rename, per-tool notes; only `backend-migrate` writes/applies migrations (F003, F010, F022–F027, F043).
+- **Security**: JWT verification rules, CSRF/session hardening, tenant-scoped ownership, safe implement snippets (F029, F033, F035, F048, F159, C008).
+- **Orchestrator** step references fixed; `backend-refactor` added to READMEs/templates; post-generation checklist fixed (F008, F041, F171, F220).
+
 ### Future
 
 - Boundary and versioning follow-ups: decide whether shared docs get semver tags or rolling dates.

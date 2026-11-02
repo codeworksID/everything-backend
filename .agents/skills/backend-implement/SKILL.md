@@ -58,53 +58,76 @@ Apply the code/architecture, API, system, and security principles in `_shared/pr
 
 ### Post-Generation Checklist
 
-After generating or modifying code, run each check below. A run is "clean" only when every Check command exits 0 and every Pass condition holds.
+After generating or modifying code, run each check below against this run's files.
+
+**Scope**
+- Scan only the files this run created or changed: the checkpoint's `created_files[]` and `modified_files[]` (see `_shared/tool-rules.md` → Concurrent & Partial Work). Without a checkpoint, use the paths whose `git status --porcelain` entry is new or whose content differs from the run-start snapshot, plus any `pre_existing_changes[]` file this run edited.
+- Map layers from `project-overview.md`, or from the layouts under Greenfield Generation (Node `src/`, FastAPI `app/`, Go `internal/`). Never assume `src/`.
+- Run each pattern with the host's `grep` tool (regex, case-insensitive where noted) restricted to the scoped files via `glob` or an explicit file list. Use shell `grep -rnE` or PowerShell `Select-String -Pattern` only when the host has no search tool.
+
+**Reporting**
+- Each check reports: files scanned (count), findings as `file:line`, and a verdict.
+- No matches is a valid result, not a tool error.
+- Report a check as "not applicable" when this run changed no files in its layer, and as "not run" when its path does not exist or the tool failed. Never report either as pass.
+- A hit is a candidate. Read the line before changing code.
+- The checklist is clean when every applicable check ran and every finding is either fixed or listed in the summary with `file:line` and a one-line justification.
 
 #### 1. Controllers contain no business logic
-- Check: `grep -nE "if|switch|for|while" src/controllers/ src/handlers/ 2>/dev/null | grep -v "validate\|parse\|format\|map\|next()"`
-- Pass condition: no output, OR output is limited to input validation and response shaping.
-- If failed: move the business branch into a service method; controller should only call `service.<action>(dto)` and map the result/error.
+- Scope: changed transport files (`controllers/`, `handlers/`, `routes/`, `api/`).
+- Pattern: `\b(if|else|switch|case|for|while|match|select)\b`
+- Pass: every hit is input validation, auth/error-to-HTTP mapping, or response shaping.
+- If failed: move the business branch into a service method; the handler should only parse input, call `service.<action>(dto)`, and map the result/error.
 
 #### 2. Services own transaction boundaries
-- Check: `grep -nE "BEGIN|COMMIT|ROLLBACK|transaction" src/services/ -r 2>/dev/null`
-- Pass condition: transaction markers appear in service files, never in controllers.
+- Scope: changed transport files.
+- Pattern (case-insensitive): `\b(begin|commit|rollback)\b|transaction|@Transactional|\bBeginTx?\(|\batomic\(`
+- Pass: zero hits in transport files.
 - If failed: open the transaction in the service method; controllers must never start or commit transactions.
 
-#### 3. No raw SQL concatenation
-- Check: `grep -nE "SELECT|INSERT|UPDATE|DELETE" src/ -r 2>/dev/null | grep -E "\\$\\{|\\%s|\\+.*['\"]"`
-- Pass condition: zero matches.
-- If failed: replace string interpolation with parameterized queries (`$1`, `?`, or ORM equivalents).
+#### 3. No SQL built from strings
+- Scope: all changed source files.
+- Pattern (case-insensitive): `` \b(select|insert|update|delete)\b.*(\$\{|["'`]\s*\+|\+\s*["'`]|["']\s+%\s*[(\w]|\.format\(|Sprintf\()|(\bf["']|Sprintf\(|\.format\().*\b(select|insert|update|delete)\b ``
+- Pass: zero hits, or each hit is justified as safe: tagged templates that parameterize `${}` (Prisma `$queryRaw`, `sql` tags from postgres.js/slonik), or interpolated identifiers taken from a fixed allowlist. `%s` and `?` placeholders passed with a separate params argument, as in `cur.execute(sql, params)`, are safe and do not match. A `%` inside a `LIKE` literal (e.g. `LIKE ' %abc'`) is a known false positive. The `%` operator pattern needs whitespace after the closing quote, so `"..."%x` written without spaces is caught only by the file read below.
+- Also read every changed repository file. Queries built across several lines can escape a line-based pattern.
+- If failed: replace string building with parameterized queries (`$1`, `?`, `%s` with a params tuple, or ORM equivalents).
 
-#### 4. All endpoints have validation schemas
-- Check: `grep -nE "router\.(get|post|put|patch|delete)|@(Get|Post|Put|Patch|Delete)|app\.(get|post|put|patch|delete)" src/ -r 2>/dev/null`
-  For each matched line, also `grep -nE "zod|joi|yup|pydantic|class-validator|validate" <file>`.
-- Pass condition: every route line has a validation reference in the same file or an imported schema.
-- If failed: add a Zod/Joi/Pydantic schema at the route boundary and parse input before calling the service.
+#### 4. All endpoints validate input
+- Scope: changed route/handler files.
+- Pattern for route declarations: `\b(router|app|fastify|server)\.(get|post|put|patch|delete)\(|@(Get|Post|Put|Patch|Delete)(Mapping)?\b|@\w+\.(get|post|put|patch|delete)\(|\.(GET|POST|PUT|PATCH|DELETE)\(`
+- Pass: each route that reads a body, query, or path params parses it through a schema before calling the service: Zod/Joi/class-validator (`ValidationPipe`), a Pydantic model parameter (FastAPI), `ShouldBind*` plus `binding:` tags (Gin), or `@Valid` (Spring). An import elsewhere in the file is not enough; check the handler itself.
+- If failed: add a schema at the route boundary and parse input before calling the service.
 
 #### 5. Domain logic does not depend on framework details
-- Check: `grep -nE "import .* from ['\"](express|fastify|@nestjs|koa|gin|spring)|@Controller|@RestController|@RequestMapping" src/domain/ src/services/ 2>/dev/null`
-- Pass condition: zero matches.
-- If failed: move the framework-typed code into an application/transport layer; keep `src/domain/` and `src/services/` framework-agnostic.
+- Scope: changed domain and service files.
+- Patterns:
+  - TS/JS: `from ["'](express|fastify|koa)["']|require\(["'](express|fastify|koa)["']\)|\bHttpException\b|@Req\(|@Res\(`
+  - Python: `^\s*(from|import)\s+(fastapi|starlette|flask|django\.http)\b`
+  - Go: `"github\.com/(gin-gonic/gin|labstack/echo|gofiber/fiber)`
+  - Java: `org\.springframework\.web\b|@(RestController|Controller|RequestMapping)\b`
+- Pass: zero hits. NestJS `@Injectable()` from `@nestjs/common` is idiomatic in services and is not a violation.
+- If failed: move the framework-typed code into the transport layer; keep domain and service code framework-agnostic.
 
 #### 6. Errors are typed and mapped centrally
-- Check: `grep -nE "res\.status\(5\)|raise Exception\(|throw new Error\(['\"]" src/ -r 2>/dev/null`
-  Then `grep -nE "errorHandler|error_mapper|exception_filter|@ControllerAdvice" src/`
-- Pass condition: raw 500s and untyped `throw new Error(...)` only appear in framework-level error middleware, not in handlers/services.
+- Scope: changed handler and service files.
+- Pattern: `res\.status\(5\d\d\)|\bthrow new Error\(|\braise Exception\(|StatusInternalServerError|\bpanic\(`. In service files, also flag `\braise HTTPException\(|\bthrow new HttpException\(`.
+- Confirm that a central mapper exists anywhere in the project (the one project-wide lookup in this checklist): `\(\s*err\w*\s*(:\s*\w+)?\s*,\s*req\w*.*,\s*res\w*.*,\s*next|exception_handler|@ControllerAdvice|@RestControllerAdvice|@ExceptionHandler|@Catch\(|ExceptionFilter|c\.Errors`. The first alternative finds 4-argument Express error handlers, inline or named (`app.use(errorHandler)`).
+- Pass: no hits outside the central error middleware/filter, and at least one central error-mapping module exists. It may register several handlers (one FastAPI `exception_handler` per error type, several `@Catch()` filters or `@ControllerAdvice` classes). Flag only competing ad-hoc mappers inside handlers or services.
 - If failed: define typed error classes (`NotFoundError`, `ConflictError`, etc.) and a single error-mapping middleware/filter.
 
-#### 7. No suppressed type errors
-- Check: `grep -nE ": any\b|@ts-ignore|@ts-expect-error|as any\b" src/ -r 2>/dev/null`
-- Pass condition: zero matches (TypeScript projects) OR only documented and justified cases (with an adjacent `// allow:` comment).
+#### 7. No suppressed type or lint errors
+- Scope: all changed source files.
+- Patterns: TS `:\s*any\b|\bas any\b|<any>|@ts-ignore|@ts-expect-error|@ts-nocheck|eslint-disable`; Python `#\s*type:\s*ignore`; Go `//\s*nolint`
+- Pass: zero hits, or each hit has an adjacent `allow: <reason>` comment.
 - If failed: replace `any` with a precise type, or remove the suppression; never ship a silent bypass.
 
-#### 8. LSP diagnostics clean
-- Check: run `lsp_diagnostics` on the changed source directory.
-- Pass condition: zero errors; warnings allowed only if unrelated to the change.
-- If failed: fix every error introduced by the new code; re-run `lsp_diagnostics` until clean.
+#### 8. Diagnostics clean
+- Check: run `lsp_diagnostics` on each changed file. If LSP is unavailable, run the project's type-check (`tsc --noEmit`, `mypy`/`pyright`, `go vet ./...`, or the build) within the limits in `_shared/tool-rules.md` → Command Time Budgets.
+- Pass: zero errors in changed files; warnings allowed only if unrelated to the change. A check that timed out is reported as "did not complete", never as pass.
+- If failed: fix every error introduced by the new code and re-run until clean.
 
 #### 9. Test coverage on critical paths
-- Check: use `grep` to find business-critical functions (`createUser`, `placeOrder`, `charge`, `payout`, or project-specific equivalents), then use `glob`/`grep` to find matching test files that reference those functions.
-- Pass condition: every business-critical function has at least one test file referencing it.
+- Check: list the business-critical functions this run added or changed (`createUser`, `placeOrder`, `charge`, `payout`, or project-specific equivalents), then use `glob`/`grep` to find test files that reference each one.
+- Pass: every listed function has at least one test that references it and exercises an error branch.
 - If failed: add at least one unit test covering the happy path and one covering an error branch; then run `backend-test`.
 
 ### Step 3: Tool Usage Rules (MANDATORY)
@@ -177,7 +200,8 @@ By layer:
 - **Controllers/handlers**: request parsing, schema validation, response formatting, error mapping
 - **Services/use cases**: business workflow, invariants, authorization, transaction boundaries for multi-write flows
 - **Repositories**: CRUD and intent-oriented queries, transaction participation, interfaces/ports where idiomatic
-- **Models/migrations**: schema definitions, relationships, constraints, migrations, seed data
+- **Models**: ORM model/entity definitions, relationships, and constraints matching `db-schema.md`; seed and fixture files. Do not enable or rely on ORM auto-sync (TypeORM `synchronize: true`, Sequelize `sync()`, GORM `AutoMigrate`, SQLAlchemy `metadata.create_all`, `prisma db push`) except against a disposable local DB this run started; schema reaches real databases only through `backend-migrate`
+- **Schema changes**: never written here. Hand them to `backend-migrate`, which is the only skill that writes and applies migration files
 - **Configuration**: env templates, DB connection, logging, middleware wiring, central error mapping
 - **Dependencies**: framework, ORM/driver, validation, testing, linting, and DI/container libraries only when they meaningfully simplify the stack
 
@@ -190,7 +214,8 @@ By layer:
 - Generate schema definitions, resolvers, data loaders, subscriptions, federation config if needed
 
 #### Database operations
-- Generate ORM models, migrations, seed scripts, query builders, connection pooling, constraints matching `db-schema.md`
+- Generate ORM models, seed scripts, query builders, connection pooling, constraints matching `db-schema.md`
+- Hand the schema change (tables, columns, indexes, constraints) to `backend-migrate`; do not write or apply migration files here
 
 #### Authentication
 - Generate auth middleware, JWT handling, password hashing, RBAC, session management
@@ -205,7 +230,8 @@ Present an implementation summary:
 - Generated file tree
 - Key files by layer
 - Dependencies added
-- Next steps: review, migrate, run, test, verify layer boundaries
+- Schema changes handed to `backend-migrate` (if any). Applying them always asks first; see `_shared/tool-rules.md` → Always Ask First
+- Next steps: review, run `backend-migrate` for pending schema changes, run, test, verify layer boundaries
 
 Ask:
 - "Does this implementation look correct?"
@@ -232,12 +258,13 @@ Most backend work is evolution, not greenfield. Use these workflows.
 
 1. Check `db-schema.md` and existing model/entity definitions
 2. Add the field to the model, schema/serializer, and any DTO used across layers
-3. Add the migration that matches the database decision (default, nullable, index, foreign key, etc.)
-4. Update repository queries that select, filter, or order by the new field
-5. Update service invariants that depend on the field
-6. Update request/response schemas and validation rules
-7. Add integration tests for repository behavior and migration correctness
-8. Update seed data and fixtures if they break
+3. Hand the schema change to `backend-migrate` with the column spec (type, nullability, default, index, foreign key) from `db-schema.md`. Do not write or apply the migration here; `backend-migrate` owns zero-downtime checks, and applying always follows `_shared/tool-rules.md` → Always Ask First
+4. If `backend-migrate` plans expand/contract or a backfill, keep the code working against both the old and new schema until the contract step (e.g. treat the new field as nullable until the backfill completes)
+5. Update repository queries that select, filter, or order by the new field
+6. Update service invariants that depend on the field
+7. Update request/response schemas and validation rules
+8. Add integration tests for repository behavior against the migrated schema; migration correctness is verified by `backend-migrate`
+9. Update seed data and fixture files if they break; running seeds against a database follows Always Ask First
 
 ### Workflow: Split a Fat Controller or Service
 
@@ -273,41 +300,82 @@ Most backend work is evolution, not greenfield. Use these workflows.
 
 ### Minimal Controller Pattern (Express)
 ```typescript
-async createUser(req, res, next) {
-  const dto = CreateUserSchema.parse(req.body);
-  const user = await this.userService.createUser(dto);
-  res.status(201).json({ data: user });
+// Express 5 forwards rejected promises from async handlers to the error middleware.
+// Express 4 does not: keep the try/catch + next(err), or wrap the handler.
+// Arrow-function class field keeps `this` bound for `router.post('/', controller.createUser)`.
+createUser = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const dto = CreateUserSchema.parse(req.body);   // ZodError -> 400 in the error middleware
+    const user = await this.userService.createUser(dto);
+    res.status(201).json({ data: toUserResponse(user) });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// Response DTO: explicit fields only, never password_hash or other secrets
+function toUserResponse(u: User): UserResponse {
+  return { id: u.id, email: u.email, displayName: u.displayName, createdAt: u.createdAt };
 }
 ```
 
 ### Minimal Router Pattern (FastAPI)
 ```python
-@router.post("/", status_code=status.HTTP_201_CREATED)
+# UserOut omits password_hash; with Pydantic v2 set model_config = ConfigDict(from_attributes=True)
+@router.post("/", status_code=status.HTTP_201_CREATED, response_model=UserOut)
 async def create_user(
     data: UserCreate,
-    svc: UserService = Depends(get_user_service)
+    svc: Annotated[UserService, Depends(get_user_service)],
 ):
-    return svc.create_user(data)
+    # The service uses an async driver (SQLAlchemy AsyncSession, asyncpg), so await it.
+    # With a sync service, declare the endpoint with plain `def` so FastAPI runs it in a threadpool;
+    # never call blocking DB I/O inside `async def`.
+    return await svc.create_user(data)
 ```
 
 ### Minimal Handler Pattern (Go/Gin)
 ```go
 func (h *UserHandler) CreateUser(c *gin.Context) {
     var dto CreateUserDto
-    if err := c.ShouldBindJSON(&dto); err != nil { /* 400 */ }
+    if err := c.ShouldBindJSON(&dto); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+        return // without return the handler keeps running and writes a second response
+    }
     user, err := h.svc.CreateUser(c.Request.Context(), dto)
-    // map err to HTTP, otherwise 201
+    if err != nil {
+        _ = c.Error(err) // error middleware maps ErrEmailTaken -> 409, unknown -> 500
+        return
+    }
+    c.JSON(http.StatusCreated, toUserResponse(user))
 }
 ```
 
 ### Minimal Service Pattern
 ```typescript
 async createUser(dto: CreateUserDto): Promise<User> {
-  const existing = await this.repo.findByEmail(dto.email);
-  if (existing) throw new ConflictError('Email already registered');
-  return this.repo.create(dto);
+  const passwordHash = await this.passwordHasher.hash(dto.password); // argon2id (or bcrypt)
+  try {
+    // Map explicit fields; never persist the raw DTO
+    return await this.repo.create({
+      email: normalizeEmail(dto.email),
+      displayName: dto.displayName,
+      passwordHash,
+    });
+  } catch (err) {
+    // Rely on the unique constraint on email; no check-then-insert (it races).
+    // Unique violation: Postgres SQLSTATE 23505, MySQL error 1062, Prisma P2002.
+    // Match the specific constraint (pg `err.constraint`, Prisma `err.meta.target`),
+    // so another unique column does not surface as an email conflict.
+    if (isUniqueViolation(err, 'users_email_key')) throw new ConflictError('Email already registered'); // -> 409
+    throw err;
+  }
 }
 ```
+
+- Never pass a request DTO straight to the repository; map the fields the entity needs.
+- Hash passwords in the service before persisting (argon2id or bcrypt, see `backend-auth`).
+- Enforce uniqueness with a database unique constraint and map the unique-violation error to 409. A prior `findBy...` check is optional UX, not the guarantee. On Postgres a unique violation aborts the surrounding transaction, so when this runs inside a wider transaction use a savepoint or `INSERT ... ON CONFLICT DO NOTHING` and check the affected row count.
+- Return a response DTO with explicit fields; never serialize the entity directly.
 
 ### Layering Rules
 
@@ -332,8 +400,8 @@ async createUser(dto: CreateUserDto): Promise<User> {
 - Domain calculations and state transitions
 
 #### Integration Tests
-- Repository behavior against the real database or a close test double
-- Migration correctness for new schema changes
+- Repository behavior against the real database (with the migrated schema) or a close test double; migration correctness itself is tested by `backend-migrate`
+- Unique-constraint violations mapped to 409
 - Transaction rollback behavior
 
 #### Endpoint / Contract Tests
@@ -345,12 +413,13 @@ async createUser(dto: CreateUserDto): Promise<User> {
 
 See `_shared/tool-rules.md` (Concurrent & Partial Work) for checkpoint, resume, rollback, and multi-feature isolation rules.
 
-**Implement-specific caveat:** when resuming from a checkpoint, run `lsp_diagnostics` on all `generated_files` before continuing. Previously clean code may have drifted while the checkpoint was inactive.
+**Implement-specific caveat:** when resuming from a checkpoint, run `lsp_diagnostics` on all `created_files[]` and `modified_files[]` before continuing. Previously clean code may have drifted while the checkpoint was inactive.
 
 ## Edge Cases
 
 - **No design exists**: Run `backend-architect` and `backend-api-design` first
 - **Memory is stale**: Run `backend-scan`
+- **Feature needs a schema change**: Hand it to `backend-migrate`; never write or apply migrations from this skill
 - **Complex business logic**: Break into smaller services, use domain modeling
 - **Legacy code**: Prefer the strangler pattern; wrap and replace incrementally
 - **Multiple languages**: Ask user which to prioritize

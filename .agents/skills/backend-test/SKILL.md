@@ -27,11 +27,25 @@ Follow the shared priority list in `_shared/context-loading.md` (Standard Requir
 
 ## mode=auto
 
+Follow the shared `mode=auto` contract in `_shared/tool-rules.md`.
+
 When the user says "run tests", "check tests", or "test", run in autonomous mode:
 
-1. Execute the detected test command immediately.
-2. Report results without asking for confirmation.
-3. Ask for confirmation only if the intent appears to be adding new tests.
+1. Run the Target Check below before any test command that is not provably unit-only. Run the tests without asking only when the check passes; otherwise ask first.
+2. Execute the detected test command within `_shared/tool-rules.md` → Command Time Budgets. A run that does not complete is reported as "did not complete", never as passing.
+3. Report results without asking for confirmation.
+4. Ask for confirmation only if the intent appears to be adding new tests, or before changing any existing test's expectation (see Existing tests fail).
+
+### Target Check
+
+Run this check before every test command unless the command provably runs only hermetic unit tests: a dedicated unit script or path (e.g. `npm run test:unit`, `pytest tests/unit`) whose setup loads no `.env` or DB/queue config and that has no database hook (see the last bullet). A combined command such as `npm test`, `pytest`, `go test ./...`, or `./mvnw test` counts as an integration run for this check.
+
+Inspect the environment and config the tests will load (`.env.test`, `.env`, test config files, `docker-compose*.yml`, CI test env, and the current shell environment) for database, queue, cache, mail, and external-API targets, e.g. `DATABASE_URL`, `DB_HOST`, `REDIS_URL`, `AMQP_URL`/`RABBITMQ_URL`, `KAFKA_BROKERS`, `SMTP_HOST`, `MONGODB_URI`, payment or email provider keys.
+
+- Proceed automatically only if every target is provably local (see `_shared/tool-rules.md` → Production Targets): `localhost`, `127.0.0.1`, `::1`, `*.localhost`, a container this run started (e.g. via Testcontainers), or a file database under a temp directory.
+- A host name containing `dev`, `staging`, or `test` is not proof. Unresolved variables count as not local.
+- If any target is not provably local, or a live third-party key is configured, stop and ask. Suites that truncate tables or send messages must never run against shared data.
+- Inspect test hooks for database commands: npm `pretest`/`posttest` scripts (npm runs them with `npm test`), Jest/Vitest `globalSetup`/`setupFiles`, pytest `conftest.py` fixtures, and Go `TestMain`. If any of them migrate, reset, seed, or push a schema (e.g. `prisma migrate reset --force`, `prisma db push`, `knex migrate:latest`, `alembic upgrade head`), ask first even for a local database (see `_shared/tool-rules.md` → Always Ask First).
 
 ## Test Strategy
 
@@ -49,7 +63,7 @@ Test business rules in isolation.
 Test real infrastructure interactions.
 
 - **Target**: repositories + real database, transaction boundaries, migration correctness, queues with test brokers
-- **Rules**: use a real database when SQL/constraints matter, roll back or truncate between tests, avoid retesting business rules
+- **Rules**: use a real database when SQL/constraints matter, but only a local or ephemeral one (e.g. Testcontainers; see Target Check), roll back or truncate between tests, avoid retesting business rules
 
 ### Contract / E2E Tests
 
@@ -70,7 +84,7 @@ Test the request/response lifecycle.
 Use deterministic, maintainable test data.
 
 - **Factories**: build valid defaults, override only what matters, keep defaults realistic, avoid shared mutable state
-- **Test database**: separate DB or schema, run migrations once per suite, clean up between tests, never rely on execution order
+- **Test database**: separate DB or schema, apply the project's existing migrations once per suite, only to a disposable local test DB (see `_shared/tool-rules.md` → Production Targets; otherwise ask first), clean up between tests, never rely on execution order
 - **Seeds**: use only for integration/contract setup, document meaning, version with schema changes
 
 ## Mocking Strategy
@@ -197,11 +211,14 @@ Fix by isolating state, freezing time, sorting comparisons, or adding synchroniz
 
 ### Existing tests fail
 
-1. Run the failing suite with `bash`
-2. Determine if failures are from recent changes, environment, or flakiness
-3. Fix environment issues first (env vars, DB connection, test data)
-4. Fix code bugs or update tests that are now invalid
-5. Re-run until green
+1. Run the failing suite with `bash` (after the Target Check, unless it is provably unit-only)
+2. Classify each failure with evidence (assertion message, stack trace, recent diff):
+   - **Implementation bug**: the code is wrong and the test is right. Fix the code, or hand the fix to `backend-implement`.
+   - **Wrong expectation from an intended behavior change**: the test asserts old behavior that was deliberately changed. Show the expectation diff and the reason (the change or decision that made it), and ask before editing the test (see `_shared/tool-rules.md` → Test Integrity).
+   - **Environment problem**: missing env vars, DB unreachable, missing test data, flakiness. Report it with the exact error; fix only local test setup you own, never by pointing tests at a non-local target.
+3. Never skip, delete, mark xfail, loosen assertions of, or regenerate snapshots for a failing test to get green.
+4. Re-run after each fix. If the same failure remains after two fix attempts, stop and report it instead of looping.
+5. List every test file you modified in the summary, with the reason.
 
 ### Choosing a framework
 
@@ -241,6 +258,8 @@ When finished, report:
 
 - Files created/modified: [list]
 - Tests added: unit [N] / integration [N] / contract [N]
+- Existing tests modified: [file → reason and user approval, or "none"]
+- Not run / did not complete: [suite → reason, e.g. non-local DATABASE_URL, time budget]
 - Coverage impact: [before] -> [after]
 - Commands: `npm test`, `pytest tests/unit`, etc.
 - Next steps:
@@ -255,6 +274,6 @@ Ask:
 
 ## Concurrent & Partial Work
 
-Follow the shared checkpoint contract in `_shared/tool-rules.md` (Concurrent & Partial Work). This skill uses checkpoint path `.opencode/everything-backend-memory/.checkpoints/backend-test-<ISO-timestamp>.json`.
+Follow the shared checkpoint contract in `_shared/tool-rules.md` (Concurrent & Partial Work). This skill uses checkpoint path `.opencode/everything-backend-memory/.checkpoints/backend-test-<feature>-<YYYYMMDDTHHMMSSZ>.json` (Windows-safe UTC timestamp, no colons).
 
 Test runs are normally idempotent, so checkpoints matter mainly when the user pauses mid-test-authoring (not mid-test-execution).

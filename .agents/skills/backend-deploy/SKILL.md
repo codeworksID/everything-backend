@@ -23,8 +23,8 @@ See `_shared/tool-rules.md` for the investigation toolkit. Use cross-platform to
   - Check: `glob` for `src/`, `app/`, `internal/`, or `lib/` directories
   - If missing: stop and ask the user for the correct project path
 - REQUIRED: `_shared/principles.md` loaded (Security section at minimum)
-  - Check: `read .agents/skills/_shared/principles.md`
-  - If missing: stop and ask the user to confirm the install location of the shared references
+  - Check: resolve `_shared/principles.md` as described in `_shared/context-loading.md` → Resolving `_shared/` Files (sibling of this skill's folder first)
+  - If missing: warn once and continue with this skill's own rules; do not stop
 - REQUIRED: manifest files read to detect stack
   - Check: `glob` for `package.json`, `pyproject.toml`, `go.mod`, `pom.xml`, or `build.gradle`
   - If missing: stop and ask the user to point at a backend project with a known manifest
@@ -37,7 +37,10 @@ See `_shared/tool-rules.md` for the investigation toolkit. Use cross-platform to
 - RECOMMENDED: `db-schema.md` exists to know required backing services
   - Check: `glob .opencode/everything-backend-memory/db-schema.md`
   - If missing: run `backend-scan` to populate memory, or proceed without it and ask the user about required services
-- If any REQUIRED Check fails, run `backend-scan` with `mode=auto`, then re-run these checks. If the missing file is a project file (e.g., manifest, source dir) that `backend-scan` cannot create, stop and ask the user.
+- RECOMMENDED: existing deployment artifacts detected
+  - Check: `glob` for `Dockerfile*`, `docker-compose*.yml`, `compose*.yml`, `.dockerignore`, `.github/workflows/*`, `.gitlab-ci.yml`
+  - If found: read them and propose a diff/patch rather than regenerating (see `_shared/tool-rules.md` → Always Ask First)
+- If any REQUIRED Check fails, run `backend-scan` with `mode=auto`, then re-run these checks. If the missing file is a project file (e.g., manifest, source dir) that `backend-scan` cannot create, stop and ask the user. A missing `_shared/` file is not a failure here; it follows the warn-and-continue rule above.
 
 ## Required Context
 
@@ -198,6 +201,7 @@ build:
 - Run lint, tests, and build before creating artifacts
 - Build images only after tests pass; tag with commit SHA
 - Use registry caching; keep deployment credentials in CI secrets
+- New Dockerfile, `.dockerignore`, and compose files are this skill's output and may be written. Creating or editing CI/CD config (`.github/workflows/*`, `.gitlab-ci.yml`) or `.env*` files, pushing images, deploying, applying IaC, rotating secrets, and overwriting any existing file this run did not create (Dockerfile, compose, `.dockerignore`, manifests, pipelines) always ask first, even in `mode=auto` (see `_shared/tool-rules.md` → Always Ask First). For an existing artifact, show a diff/patch for approval instead of replacing it
 
 ## Health Checks
 

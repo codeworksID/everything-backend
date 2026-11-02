@@ -35,7 +35,7 @@ What actually happened. Include full error messages, stack traces, and screensho
 - Node version: [e.g. 20.10.0 — output of `node -v`]
 - npm/npx version: [e.g. 10.2.3 — output of `npm -v`]
 - Install method: [e.g. `npx everything-backend`, manual clone, per-project]
-- Target app: [e.g. Opencode, Cursor, Gemini IDE]
+- Target app: [e.g. Opencode, Cursor, Antigravity (Gemini IDE)]
 - Affected skill (if any): [e.g. `backend-test`, installer, none]
 
 ## Additional context

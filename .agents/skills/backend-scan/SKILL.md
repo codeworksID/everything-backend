@@ -1,6 +1,6 @@
 ---
 name: backend-scan
-description: "Scan a backend project to learn its current state and keep memory files in sync. Use this skill when the user says 'explore', 'understand', 'what's here', 'scan', 'refresh memory', 'update memory', or 'sync memory'. Operates in mode=initial for first discovery or mode=sync for drift detection."
+description: "Scan a backend project to learn its current state and keep memory files in sync. Use this skill when the user says 'explore', 'understand', 'what's here', 'scan', 'refresh memory', 'update memory', or 'sync memory'. Runs with scope=initial for first discovery or scope=sync for drift detection; it is read-only apart from memory files."
 ---
 
 # Backend Scan
@@ -32,8 +32,8 @@ If any REQUIRED check fails, run `backend-scan` with `mode=auto`, then re-run th
 
 Load context in this priority order:
 
-- For `mode=initial`: only the project root path is required; no memory files need to exist yet.
-- For `mode=sync`: load existing memory files in priority order:
+- For `scope=initial`: only the project root path is required; no memory files need to exist yet.
+- For `scope=sync`: load existing memory files in priority order:
   1. `project-overview.md`
   2. `tech-stack.md`
   3. `api-patterns.md`
@@ -41,11 +41,11 @@ Load context in this priority order:
   5. `decisions.md`
   6. `issues.md`
 
-If memory files are stale or incomplete, run `backend-scan` in `mode=sync` first.
+If memory files are stale or incomplete, run `backend-scan` in `scope=sync` first.
 
 ## Process
 
-Set `mode=initial` for the first scan of a project (creates memory files). Set `mode=sync` to detect drift from existing memory files and update them.
+Set `scope=initial` for the first scan of a project (creates memory files). Set `scope=sync` to detect drift from existing memory files and update them. `scope` says what to scan; it is separate from the run mode (`mode=auto` / `mode=interactive`). For compatibility, a caller that passes `mode=initial` or `mode=sync` means `scope=initial` or `scope=sync`; the run mode is then inherited from the caller's run mode, else `mode=auto`.
 
 ### Step 0: Tool Usage Rules
 
@@ -53,9 +53,15 @@ Use OpenCode tools directly during every scan.
 
 See `_shared/tool-rules.md` for the canonical tool-usage rules.
 
+**Read-only rule**: scan only reads the project. Use `glob`, `read`, `grep`, `lsp_*`, and read-only git (`git status`, `log`, `diff`, `show`). The only files scan writes are its memory files in `.opencode/everything-backend-memory/` (and their checkpoint and archive files).
+
+- Use `lsp_*` only when the language server is already running or does not execute build scripts. Project import in some servers runs repository code (rust-analyzer runs `build.rs` and proc macros by default; the Java/Kotlin servers evaluate Gradle or Maven build files); that counts as running project code and falls under the confirmation rule below.
+- Never install dependencies, run builds, tests, migrations, `docker compose`, or the application, and never run project scripts (package scripts and install hooks execute repository code).
+- If a fact can only be learned by running something, record it as unknown in memory and suggest the owning skill (e.g. `backend-test`, `backend-doctor`). Running it needs the user's confirmation, in `mode=auto` too.
+
 ### Step 1: Scan Project State
 
-In both modes, start by scanning the project:
+In both scopes (`initial` and `sync`), start by scanning the project:
 
 - Detect language/package manager:
   - **Node.js**: `package.json`, `tsconfig.json`, `yarn.lock`, `pnpm-lock.yaml`
@@ -80,20 +86,23 @@ In both modes, start by scanning the project:
   - **System**: scalability, caching, queues, observability, event-driven/CQRS patterns
   - **Security**: least privilege, input sanitization, secure defaults, audit logging, encryption
 
-### Step 2: Mode Split
+### Step 2: Scope Split
 
 #### mode=auto
 
-When the user triggers this skill with phrases such as "scan", "explore", or "refresh memory", run in autonomous mode:
+Follow the shared `mode=auto` contract in `_shared/tool-rules.md`; this section adds only scan-specific choices and does not redefine it. Under that contract, scan's reads and its memory-file writes run without asking; everything else is excluded by the Read-only rule above.
 
-1. Do not ask for confirmation before starting.
-2. Select the concrete mode:
-   - Use `mode=initial` if no memory files exist in `.opencode/everything-backend-memory/`.
-   - Use `mode=sync` if memory files already exist.
-3. Execute the scan immediately.
-4. Present the discovery summary or change summary only at the end.
+Scan-specific choices:
 
-#### mode=initial
+1. Select the scope when the caller did not pass one:
+   - Use `scope=initial` if no memory files exist in `.opencode/everything-backend-memory/`.
+   - Use `scope=sync` if memory files already exist.
+2. In `scope=sync`, apply New and Modified updates without asking. Deleted items are only marked deprecated (scan never removes entries). Pause only on conflicts (see Edge Cases).
+3. Present the discovery summary or change summary at the end.
+
+In `mode=interactive`, show the discovery or change summary with the planned memory diff and wait for approval before writing.
+
+#### scope=initial
 
 If no memory files exist, treat this as first discovery:
 
@@ -105,9 +114,9 @@ If no memory files exist, treat this as first discovery:
    - `decisions.md` — key architecture decisions (if any are obvious)
    - `issues.md` — known issues and TODOs (if found)
 2. Preserve any existing content by appending rather than overwriting.
-3. Present the discovery summary at the end; do not ask for confirmation before running.
+3. Present the discovery summary at the end. In `mode=auto`, do not ask before writing; in `mode=interactive`, show the planned memory files and wait for approval (see above).
 
-#### mode=sync
+#### scope=sync
 
 If memory files already exist, treat this as drift detection:
 
@@ -115,16 +124,16 @@ If memory files already exist, treat this as drift detection:
    - Read the `Last Updated` timestamp from the file.
    - Compare it against the latest `git` commit timestamp for the source files relevant to that memory file.
    - If the commit timestamp is newer than the memory timestamp, mark the file as stale.
-2. If any file is stale, run drift detection and present a diff summary before applying updates.
+2. If any file is stale, run drift detection and build a diff summary of the planned updates.
 3. Read current memory files in `.opencode/everything-backend-memory/`:
    - `project-overview.md`, `tech-stack.md`, `api-patterns.md`, `db-schema.md`, `decisions.md`, `issues.md`
 4. Compare the live project state against memory.
 5. Classify changes:
    - **New** routes/models/dependencies/configs → add to memory
    - **Modified** routes/schema/dependencies/configs → update memory
-   - **Deleted** items → mark as deprecated in memory; do not remove without confirmation
-6. Generate a change summary and ask the user for confirmation before applying updates.
-7. After approval, update affected files with timestamped entries and refresh "Last Updated" timestamps.
+   - **Deleted** items → mark as deprecated in memory; never remove the entry
+6. Generate a change summary. In `mode=auto`, apply it unless it contains conflicts; on conflicts, apply the non-conflicting updates and ask about the rest. In `mode=interactive`, ask before applying any update.
+7. Update affected files with timestamped entries and refresh "Last Updated" timestamps.
 
 ### Step 3: Update Memory Files
 
@@ -148,7 +157,7 @@ Update rules:
 
 ### Compaction
 
-After appending a new timestamped entry to a memory file, count the timestamped entries in that file. If more than 5 exist, archive the oldest entries and retain only the most recent 5.
+After appending a new timestamped entry to a memory file, compact it as defined in `_shared/memory-schema.md` → Compaction rule. Compaction applies only to timestamped history entries: the latest current-state entry of each file, issues that are Open or In Progress, and Accepted decisions that are not superseded are never archived. Archive filenames must not collide with existing archives.
 
 Update entry format:
 
@@ -188,7 +197,7 @@ Update entry format:
 
 ## Templates
 
-### Discovery Summary (mode=initial)
+### Discovery Summary (scope=initial)
 
 ```markdown
 # Project Discovery Summary
@@ -216,7 +225,7 @@ Update entry format:
 - ✅ db-schema.md
 ```
 
-### Change Summary (mode=sync)
+### Change Summary (scope=sync)
 
 ```markdown
 # Memory Sync Summary
@@ -254,10 +263,10 @@ Update entry format:
 - **Multiple languages detected**: Focus on the backend language and note others.
 - **Monorepo structure**: Identify the specific backend directory.
 - **No clear architecture**: Note as "undetermined" and ask the user.
-- **Memory files already exist in mode=initial**: Append new findings; do not overwrite.
-- **No memory files exist in mode=sync**: Suggest running a fresh `mode=initial` scan.
+- **Memory files already exist in scope=initial**: Append new findings; do not overwrite.
+- **No memory files exist in scope=sync**: Suggest running a fresh `scope=initial` scan.
 - **Large codebase**: Focus on key directories (`src/`, `app/`, `cmd/`).
 - **Generated code present**: Note which files are generated.
 - **Conflicting changes detected**: Present conflicts to the user; do not auto-resolve.
 - **No changes detected**: Report "Memory is up to date".
-- **Deleted memory items**: Mark as deprecated; do not remove without confirmation.
+- **Deleted memory items**: Mark as deprecated; never remove the entry.

@@ -30,6 +30,7 @@ Who benefits from this, and how? What concrete workflow does it improve?
 - [ ] `backend-visualize`
 - [ ] `backend-api-design`
 - [ ] `backend-implement`
+- [ ] `backend-refactor`
 - [ ] `backend-test`
 - [ ] `backend-auth`
 - [ ] `backend-ops`

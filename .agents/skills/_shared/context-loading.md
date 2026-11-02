@@ -4,6 +4,29 @@ Shared prerequisites for every backend skill. Skills reference this document ins
 
 All examples use OpenCode-native tools first (`glob`, `read`), then platform-specific shell commands. Pick the approach that matches your environment.
 
+## Resolving `_shared/` Files
+
+> **This section is the single source of truth** for locating `_shared/` files. Every `_shared/<file>.md` reference in a skill resolves this way.
+
+The installer copies `_shared/` as a sibling of the skill folders, so resolve `_shared/<file>.md` relative to the directory containing the current `SKILL.md`: `<skill-dir>/../_shared/<file>.md`. Normalize this to an absolute path before calling `read` or `glob`; do not put `..` inside a glob pattern. This works for per-project and global installs alike.
+
+If that path does not exist, try these in order and use the first that resolves:
+
+1. `<project-root>/.agents/skills/_shared/`
+2. `~/.agents/skills/_shared/`
+3. `~/.claude/skills/_shared/`
+4. `~/.cursor/skills/_shared/`
+5. `~/.gemini/config/plugins/everything-backend-plugin/skills/_shared/` (Antigravity plugin install)
+
+If none resolves, warn once (`shared reference <file> not found; continuing with this skill's own rules`) and continue. A missing shared doc never stops a run.
+
+In a skill's prerequisites this is written as:
+
+```markdown
+- Check: resolve `_shared/principles.md` as described in `_shared/context-loading.md` → Resolving `_shared/` Files (sibling of this skill's folder first)
+- If missing: warn once and continue with this skill's own rules; do not stop
+```
+
 ## Standard Prerequisites
 
 Run these checks before any skill does real work. Skills may add domain-specific prerequisites on top.
@@ -68,15 +91,19 @@ ls package.json pyproject.toml go.mod pom.xml build.gradle Cargo.toml Gemfile 2>
 
 ### 3. Shared File Presence
 
-Check that the `_shared/` reference files exist alongside the skill.
+Check that the `_shared/` reference files can be resolved, using the order in [Resolving `_shared/` Files](#resolving-_shared-files) (sibling of this skill's folder first, not a project-relative path).
 
 **OpenCode-native (cross-platform):**
 
+First resolve `<skill-dir>/..` to an absolute path (glob tools match patterns relative to a search path and do not resolve `..` inside a pattern). Then:
+
 ```
-glob .agents/skills/_shared/*.md
+glob _shared/*.md        (search path: the parent of the skill directory)
 ```
 
-Expected results: `principles.md`, `tool-rules.md`, `memory-schema.md`, `context-loading.md`. If any are missing, note it in the output but do not block execution.
+or `read <absolute-parent>/_shared/<file>.md` directly. Use the same form for each fallback directory (search path: the directory that contains `_shared/`).
+
+Expected results: `principles.md`, `tool-rules.md`, `memory-schema.md`, `context-loading.md`. If any are missing, warn once per file and continue; a missing shared doc never blocks execution.
 
 ### 4. Memory Directory and Memory File Fallback
 
@@ -92,7 +119,7 @@ glob .opencode/everything-backend-memory/*.md
 
 If the result is empty, the memory directory either does not exist or has no memory files. In that case:
 
-1. If the skill supports `mode=initial` (e.g., `backend-scan`), run it to create memory files.
+1. If the skill supports `scope=initial` (e.g., `backend-scan`), run it to create memory files.
 2. Otherwise, suggest the user run `backend-scan` first, or proceed with manifest-only context if the user confirms.
 
 **PowerShell:**
@@ -139,7 +166,7 @@ git log -1 --format=%ct -- src/
 git log -1 --format=%ct -- src/
 ```
 
-Compare the git timestamp against the memory file's `## Last Updated`. If the git commit is newer, the memory file is stale. Run `backend-scan` with `mode=sync` to refresh.
+Compare the git timestamp against the memory file's `## Last Updated`. If the git commit is newer, the memory file is stale. Run `backend-scan` with `scope=sync` to refresh.
 
 If `git` is unavailable, proceed with the memory files as-is and note that staleness was not verified.
 
@@ -191,7 +218,7 @@ Each backend skill includes a short section like this:
 ```markdown
 ## Prerequisites
 
-See `_shared/context-loading.md` for standard prerequisites (project root check, manifest detection, memory file presence, fallback rules, and context priority list).
+See `_shared/context-loading.md` for standard prerequisites (`_shared/` resolution, project root check, manifest detection, memory file presence, fallback rules, and context priority list).
 
 Add any skill-specific prerequisites below:
 - REQUIRED: [skill-specific condition]

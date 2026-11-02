@@ -36,8 +36,14 @@ Refactor-specific prerequisites:
   - Check: `glob **/{jest.config*,vitest.config*,pytest.ini,pyproject.toml,go.mod,*Test.java,*_test.go}`
   - Also check: `glob {tests,test,__tests__,spec}/**`
   - If missing: stop and ask the user to confirm a test suite or run `backend-test` first. Do not refactor without a safety net.
+- REQUIRED: Clean working tree (rollback depends on it)
+  - Check: `git status --porcelain -- . ":(exclude).opencode/everything-backend-memory"` at run start, and record the output and `git rev-parse HEAD` (the run-start SHA) in the checkpoint. The skills' own memory folder (memory files, checkpoints, baseline reports) is excluded on purpose: it is not part of the refactor and is never "user changes". If it shows up as untracked in other commands, suggest adding `.opencode/everything-backend-memory/` to `.gitignore` (ask first; editing `.gitignore` is the user's call).
+  - If not a git repository: stop and ask. Rollback relies on the run's own git patches.
+  - If the output is non-empty: stop and ask. The user can commit or stash their changes themselves, or tell you to proceed with the dirty files recorded in `pre_existing_changes[]` as off-limits (never edited by this run, never touched by rollback). If an off-limits file is inside the refactor scope, the user must commit or stash it first.
+  - Never stash, commit, reset, or check out on the user's behalf without asking (see `_shared/tool-rules.md` → Always Ask First).
 - REQUIRED: Tests currently pass (green baseline)
-  - Run the test suite via `bash` before any structural change
+  - Run the test suite via `bash` before any structural change, within `_shared/tool-rules.md` → Command Time Budgets. A run that does not complete is "not verified", never a green baseline.
+  - Run the Target Check from `backend-test` first: unless the command provably runs only hermetic unit tests, confirm every database, queue, and external target is provably local (see `_shared/tool-rules.md` → Production Targets), and ask first if a test hook migrates, resets, or seeds a database; otherwise ask before running.
   - If tests fail: stop and report. Fixing failing tests is not a refactor.
 - RECOMMENDED: `project-overview.md` and `tech-stack.md` exist in memory
   - If missing: run `backend-scan` with `mode=auto` to populate memory
@@ -66,8 +72,8 @@ Refactor-specific additions:
 - **Behavior**:
   - Run the test suite as a baseline before any code change (Step 1 of Core Process).
   - Proceed autonomously through characterization tests, structural changes, and verification.
-  - **Pause when**: the refactor target is ambiguous (e.g., "refactor the codebase" without specifying which module), when the test suite has pre-existing failures, or when the proposed change would break the public API contract.
-- **Exit condition**: all tests pass with identical output, LSP diagnostics clean, summary reported.
+  - **Pause when**: the refactor target is ambiguous (e.g., "refactor the codebase" without specifying which module), when the working tree is dirty at run start, when the test suite has pre-existing failures, when the proposed change would break the public API contract, or before deleting a file this run did not create.
+- **Exit condition**: every test that passed in the baseline still passes and every added characterization test passes (normalized per-test comparison, Step 7), LSP diagnostics clean, summary reported.
 
 ## Core Process
 
@@ -75,18 +81,26 @@ Refactor-specific additions:
 
 Before touching any code, lock the current behavior.
 
-1. Run the full test suite and capture the output as baseline evidence:
+All baseline artifacts go in this run's checkpoint directory, `.opencode/everything-backend-memory/.checkpoints/backend-refactor-<feature>-<YYYYMMDDTHHMMSSZ>/` (called `<ckpt>` below). That folder is inside the project tree but is not part of the refactor; it is excluded from the clean-tree check and should be gitignored (see Prerequisites).
+
+1. Run the full test suite with a machine-readable per-test report, and record the runner's own exit code. Let the runner write the report file itself instead of piping: `cmd | tee file` returns `tee`'s exit code and hides a red suite.
    ```bash
-   # Capture baseline
-   npm test 2>&1 | tee baseline-output.txt   # or pytest, go test, etc.
+   # bash: no pipe, so $? is the runner's exit code
+   npx jest --json --outputFile=<ckpt>/baseline.json; echo "exit=$?"
+   npx vitest run --reporter=junit --outputFile=<ckpt>/baseline.xml; echo "exit=$?"
+   pytest --junitxml=<ckpt>/baseline.xml; echo "exit=$?"
+   go test -json ./... > <ckpt>/baseline.jsonl; echo "exit=$?"   # bash only
+   # Maven/Gradle: run the normal test goal, then copy target/surefire-reports/*.xml
+   # or build/test-results/test/*.xml into <ckpt>/
    ```
-2. Record the test output hash (SHA-256 or similar) for later comparison.
+   In PowerShell, read `$LASTEXITCODE` on the line right after the command, and run `go test -json` under bash or as `cmd /c "go test -json ./... > <ckpt>\baseline.jsonl"` (cmd writes the bytes unchanged; `$LASTEXITCODE` is go's exit code). Never use `>` for patch or report files in Windows PowerShell 5.1: it writes UTF-16LE, which `git apply` and JSON parsers reject. Patches are always written with `git diff --output=<file>` (see Step 5), never with a shell redirect. If a pipe is unavoidable in bash, run `set -o pipefail` first. Use the project's own test script when it wraps the runner, passing the reporter flags through (e.g. `npm test -- --json --outputFile=...` for a script that calls Jest directly).
+2. Normalize the report into `<ckpt>/baseline-results.json`: a sorted list of `{test id, status}` where the id is file + suite + test name and status is `passed`, `failed`, or `skipped`. Drop durations, timestamps, seeds, and log output. This list, not a hash of raw output, is the comparison baseline.
 3. If the code path being refactored has no tests, write **characterization tests** first:
    - Exercise the existing behavior through its public interface
    - Assert on current outputs, status codes, error types, and side effects
    - Name them clearly: `Characterization: [module] produces [behavior]`
    - See `backend-test` for characterization test guidance
-4. Confirm the full suite (including new characterization tests) passes before proceeding.
+4. Re-run the full suite (including new characterization tests) the same way and confirm it passes. If every previously passing test still passes, save its normalized result as the locked baseline in `<ckpt>/baseline-results.json`; added characterization tests appear as new `passed` entries. No structural change has been made yet, so this is the only point where the baseline may be updated.
 
 > **Never skip this step.** Refactoring without a behavioral baseline is just guessing.
 
@@ -129,12 +143,22 @@ Apply the chosen pattern in small, verified increments:
 
 1. Make one atomic structural change (extract one method, move one class, rename one symbol).
 2. Update all callers identified in Step 3.
-3. Run the test suite after each atomic change.
-4. If tests fail, revert the last change immediately. Do not accumulate broken states.
-5. Run `lsp_diagnostics` on all changed files after each change.
-6. Repeat until the pattern is fully applied.
+3. Run the test suite after each atomic change (time limits: `_shared/tool-rules.md` → Command Time Budgets) and compare it to the baseline as in Step 7.
+4. If the run is green, save the run's changes so far, cumulative against the run-start SHA (not the index, not a moving `HEAD`): `git diff --binary --output=<ckpt>/step-<N>.patch <start-sha> -- <files this run changed>`. Then copy it to the shared patch path `.checkpoints/backend-refactor-<feature>-<YYYYMMDDTHHMMSSZ>.patch` so the shared rollback in `_shared/tool-rules.md` finds it. Files this run created are untracked and not in `git diff`: list them in `created_files[]` and copy them to `<ckpt>/step-<N>/created/`.
+5. If tests fail, undo only this increment, then continue from the last green state. Do not accumulate broken states.
+   - Check `git rev-parse HEAD` equals the run-start SHA; if it moved, stop and ask (see Step 8, item 2).
+   - Save the failed state for the report: `git diff --binary --output=<ckpt>/failed-<N>.patch <start-sha> -- <files this run changed>`
+   - Reverse it: `git apply -R --check <ckpt>/failed-<N>.patch`, then `git apply -R <ckpt>/failed-<N>.patch`; re-apply the last green state: `git apply <ckpt>/step-<N-1>.patch` (skip for the first increment)
+   - Remove files that this increment created and restore earlier run-created files from `<ckpt>/step-<N-1>/created/` (this run created them, so no confirmation is needed)
+   - If `git apply` fails because files changed outside this run, stop and show the conflict. Never force it, and never use `git checkout -- <file>`, `git reset --hard`, or `git clean`.
+6. Run `lsp_diagnostics` on all changed files after each change.
+7. Repeat until the pattern is fully applied.
 
-**Increment size rule**: each commit-size change should leave the codebase in a fully working state. If a change requires touching more than ~5 files, break it down further.
+**Increment size rule**: each increment should leave the codebase in a fully working state. If a change requires touching more than ~5 files, break it down further. The user may commit green increments themselves; commit on their behalf only when they ask (see `_shared/tool-rules.md` → Always Ask First). Patches stay relative to the run-start SHA, so they still describe the whole run after such a commit, but undoing committed increments works differently (see Step 8, item 2).
+
+**Deletion rule**: removing code inside a file is part of the refactor. Deleting a whole file or module that this run did not create (an old file after a move, a legacy module after a strangler fig) is listed in the plan and done only after confirmation, in `mode=auto` too.
+
+**Retired tests**: tests that only cover code removed under the Deletion rule may be removed in the same confirmed step. Before asking, show which tests on the new module cover the same behavior; if that behavior is not covered, add or move tests first. List the removed tests in the summary as "retired with `<module>`". This is not a Test Integrity exception: a test that fails while its code still exists is never removed.
 
 ### Step 6: Strangler Fig (When Applicable)
 
@@ -143,14 +167,18 @@ For large-scale migrations or legacy replacement:
 1. Create the new module/service alongside the old one (not replacing it).
 2. Add a routing layer or feature flag that directs traffic to the new implementation.
 3. Migrate callers one at a time, verifying after each.
-4. Remove the old implementation only when zero callers remain.
+4. Remove the old implementation only when zero callers remain, and only after confirmation (see the Deletion rule in Step 5).
 5. Remove the routing layer/feature flag once the old code is deleted.
 
 ### Step 7: Verification
 
 After the refactor is complete:
 
-1. Run the full test suite and compare output to the baseline captured in Step 1.
+1. Run the full test suite as in Step 1 and normalize the result. Compare it per test against `<ckpt>/baseline-results.json`:
+   - Every baseline `passed` test must still be `passed`. A test that is now `failed`, `skipped`, or missing is a regression.
+   - If a test id changed only because the refactor moved or renamed its file or suite, map old id to new id explicitly in the summary. Tests retired with a confirmed module deletion (see Retired tests in Step 5) are listed as such. Any other missing test is a regression.
+   - New tests (e.g. characterization tests added during the run) must pass.
+   - Timings, ordering, and log output are ignored.
 2. Run `lsp_diagnostics` on every changed file — zero errors required.
 3. Run `lsp_find_references` on the old location/symbol to confirm zero dangling references remain.
 4. Verify no new `any` types, suppressed errors, or linting violations were introduced.
@@ -158,12 +186,19 @@ After the refactor is complete:
 
 ### Step 8: Rollback
 
-If any verification step fails and the fix is not obvious:
+If any verification step fails and the fix is not obvious, roll back this run's own changes only, following `_shared/tool-rules.md` → Concurrent & Partial Work (Rollback):
 
-1. Use `git diff` to review all changes.
-2. Revert to the last known-good commit.
-3. Re-attempt the refactor with a smaller increment or a different decomposition.
-4. Never ship a partially-refactored state.
+1. Use `git diff` to review all changes and show the user which files this run changed and created.
+2. Check `git rev-parse HEAD` against the run-start SHA. If HEAD moved (the user committed increments), stop and ask: committed increments are undone only by a `git revert` the user approves (see `_shared/tool-rules.md` → Always Ask First), never by reverse-applying patches over them.
+3. Undo from the saved patches, never from a fresh diff. A patch generated now always reverse-applies cleanly and would silently discard edits the user made since; a diff taken at rollback time is only for the report.
+   - Confirm that the current `git diff <start-sha> -- <files this run changed>` equals the last saved `<ckpt>/step-<N>.patch` plus the in-progress increment recorded in the checkpoint, if any. On a mismatch, stop and show the difference.
+   - Return to the last green increment (as in Step 5, item 5), or undo the whole run: first undo any in-progress increment as in Step 5, item 5, then `git apply -R --check <ckpt>/step-<N>.patch` and `git apply -R <ckpt>/step-<N>.patch`.
+4. Files in `pre_existing_changes[]` (user changes at run start) are never touched.
+5. If `git apply -R --check` fails because the user edited the files since, stop and show the conflicting hunks. Never force it.
+6. List the files in `created_files[]`; delete them only after the user confirms.
+7. Never use `git checkout -- <file>`, `git reset --hard`, `git clean`, or a reset to an earlier commit for rollback.
+8. Re-attempt the refactor with a smaller increment or a different decomposition.
+9. Never ship a partially-refactored state.
 
 ## Refactor Pattern Catalog
 
@@ -238,7 +273,7 @@ If any verification step fails and the fix is not obvious:
 2. Build the replacement module behind the same interface.
 3. Add a router/facade/feature flag that selects between old and new.
 4. Migrate callers one by one, testing after each switch.
-5. Remove the old module and the routing layer when migration is complete.
+5. Remove the old module and the routing layer when migration is complete (deleting the old module's files needs confirmation; see the Deletion rule in Step 5).
 
 **Verification**: all callers route through the new module; the old module has zero references; tests pass with the old module deleted.
 
@@ -264,7 +299,7 @@ If any verification step fails and the fix is not obvious:
 
 1. Use `lsp_prepare_rename` to verify the symbol is safe to rename.
 2. Use `lsp_rename` to apply the rename across the workspace.
-3. For file moves, create the new file, update all imports, then delete the old file.
+3. For file moves, create the new file, update all imports, then delete the old file after confirmation (it was not created by this run; see the Deletion rule in Step 5).
 4. Run `lsp_find_references` on the old name/path to confirm zero stragglers.
 5. Run the test suite.
 
@@ -274,9 +309,16 @@ If any verification step fails and the fix is not obvious:
 
 This skill participates in the shared checkpoint contract defined in `_shared/tool-rules.md` (Concurrent & Partial Work). See that document for checkpoint format, resume, rollback, multi-feature isolation, and partial completion rules.
 
-Refactor-specific checkpoints are written to `.opencode/everything-backend-memory/.checkpoints/backend-refactor-<ISO-timestamp>.json`.
+Refactor-specific checkpoints are written to `.opencode/everything-backend-memory/.checkpoints/backend-refactor-<feature>-<YYYYMMDDTHHMMSSZ>.json` (Windows-safe UTC timestamp, no colons), with the shared patch at `backend-refactor-<feature>-<YYYYMMDDTHHMMSSZ>.patch` (always equal to the latest green `step-<N>.patch`). As an extension of the shared contract, baseline reports, per-step patches, and copies of created files go in the sibling directory `backend-refactor-<feature>-<YYYYMMDDTHHMMSSZ>/`.
 
-**Refactor-specific caveat**: every checkpoint MUST include the baseline test output hash captured in Step 1. On resume, re-run the test suite and compare the output hash against the checkpoint before continuing. A mismatch means the codebase drifted while the checkpoint was inactive — treat this as a conflict and re-run the baseline before proceeding.
+**Refactor-specific caveat**: besides the shared fields (`pre_existing_changes[]`, `created_files[]`, `modified_files[]`, patch path), every checkpoint MUST record the run-start SHA, the path of the normalized baseline (`baseline-results.json`), the run-start `git status --porcelain` output, the last green step patch, and the in-progress increment (its number and the files it touches) while one is open. On resume:
+
+1. Check `git rev-parse HEAD` against the run-start SHA (if it moved, ask as in Step 8, item 2). Then compare `git diff <start-sha> -- <files this run changed>` with the last green step patch.
+   - A match: continue from the next pending step.
+   - Extra changes only in files of the recorded in-progress increment: the run was interrupted mid-increment. Show the diff and offer to undo that increment as in Step 5, item 5, or stop.
+   - Changes in files outside the run's recorded set, or in run files beyond the in-progress increment: the code changed while the checkpoint was inactive. Stop and show the difference.
+2. Re-run the test suite and compare it per test against the original baseline (Step 7), not against a fresh run.
+3. Never re-baseline on half-refactored code. If the original baseline must be replaced, roll back to the run-start state first (Step 8) and ask.
 
 ## Edge Cases
 

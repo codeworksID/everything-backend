@@ -29,7 +29,9 @@
   "scripts": {
     "postinstall": "node ./scripts/install.js",
     "install:skills": "node ./scripts/install.js",
-    "install:skills:dry": "node ./scripts/install.js --dry-run"
+    "install:skills:dry": "node ./scripts/install.js --dry-run --target ./tmp-skills",
+    "check": "node ./scripts/check-package.js",
+    "prepublishOnly": "node ./scripts/check-package.js"
   },
   "engines": {
     "node": ">=18"

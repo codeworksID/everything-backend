@@ -14,10 +14,11 @@ Skill backend Opencode yang dapat digunakan kembali, mencakup penemuan proyek, a
 - `backend-orchestrator` — mengarahkan permintaan ke skill backend yang tepat
 - `backend-scan` — mengeksplorasi proyek yang sudah ada dan menyinkronkan file memori
 - `backend-architect` — merancang arsitektur backend dan pemilihan tech stack
-- `backend-db-design` — merancang skema basis data dan migrasi
+- `backend-db-design` — merancang skema basis data dan rencana migrasi
 - `backend-visualize` — menghasilkan diagram Mermaid yang indah (ERD, class, actor, flowchart, sequence, architecture)
 - `backend-api-design` — merancang endpoint API dan kontraknya
 - `backend-implement` — membuat atau memodifikasi kode backend
+- `backend-refactor` — refactoring tanpa mengubah perilaku: memecah controller/service yang gemuk, mengekstrak modul, mengurangi coupling, strangler fig, memodernisasi kode legacy
 - `backend-test` — merancang tes, fixture, mock, dan cakupan (coverage)
 - `backend-auth` — merancang dan mengimplementasikan autentikasi serta otorisasi
 - `backend-ops` — logging, metrics, tracing, caching, async messaging, dan konfigurasi
@@ -34,7 +35,7 @@ Jika Anda baru mengenal skill-skill ini, coba dalam urutan berikut:
 1. **`backend-orchestrator`** — Tidak yakin skill mana yang sesuai dengan permintaan Anda? Mulai dari sini dan skill ini akan mengarahkan Anda ke yang tepat.
 2. **`backend-scan`** — Arahkan ke repositori backend yang sudah ada untuk menemukan struktur, stack, dan konvensinya.
 3. **`backend-architect`** — Gunakan ini ketika Anda merencanakan layanan baru atau merestrukturisasi layanan yang sudah ada.
-4. **`backend-db-design`** — Rancang tabel, relasi, indeks, dan migrasi sebelum menulis kode.
+4. **`backend-db-design`** — Rancang tabel, relasi, indeks, dan rencana migrasi sebelum menulis kode (`backend-migrate` yang menulis dan menerapkan file migrasinya).
 5. **`backend-api-design`** — Definisikan endpoint, skema request/response, dan kontrak error.
 6. **`backend-implement`** — Ubah desain menjadi kode yang berfungsi, atau kembangkan kode yang sudah ada.
 7. **`backend-test`** — Tambahkan tes, fixture, mock, dan cakupan (coverage) selanjutnya.
@@ -45,6 +46,7 @@ Setelah dasar-dasarnya, gunakan skill khusus sesuai kebutuhan:
 - **`backend-ops`** — untuk logging, metrics, tracing, caching, dan async messaging.
 - **`backend-deploy`** — untuk Docker, CI/CD, dan setup infrastruktur.
 - **`backend-migrate`** — untuk evolusi skema dan migrasi zero-downtime.
+- **`backend-refactor`** — untuk memecah controller dan service yang gemuk, mengekstrak modul, mengurangi coupling, dan memodernisasi kode legacy tanpa mengubah perilaku.
 - **`backend-doctor`** — untuk health check, linting, type check, dan code review.
 - **`backend-visualize`** — untuk diagram ERD, arsitektur, dan alur.
 
@@ -59,8 +61,8 @@ npx everything-backend
 Installer akan berjalan secara interaktif dan meminta Anda memilih:
 
 1. **Global** — Menginstal skill sebagai plugin IDE/aplikasi global. Anda akan diminta memilih aplikasi target:
-   - **Gemini IDE** — `~/.gemini/config/plugins/everything-backend-plugin`
-   - **Cursor** — `~/.cursor/skills-cursor`
+   - **Antigravity (Gemini IDE)** — `~/.gemini/config/plugins/everything-backend-plugin`
+   - **Cursor** — `~/.cursor/skills`
    - **Opencode / generic** — `~/.agents/skills`
 2. **Per-project** — Meminta path direktori proyek Anda dan menginstal skill secara lokal di dalam `<project-path>/.agents/skills/`.
 
@@ -97,11 +99,17 @@ node scripts/install.js --target "C:\Users\you\Documents\GitHub\my-project\.agen
 
 ## 安装内容 / What gets installed
 
-Installer menyalin setiap folder dari `.agents/skills/` ke direktori skill Opencode global Anda. Setiap skill diinstal sebagai:
+Installer menyalin setiap folder skill dari `.agents/skills/` beserta folder bersama `_shared/` ke target yang Anda pilih. Skill mencari `_shared/` di samping foldernya sendiri, jadi keduanya selalu berada bersama.
 
-```text
-~/.agents/skills/<skill-name>/SKILL.md
-```
+| Target | Skill diinstal sebagai | File tambahan |
+|---|---|---|
+| Antigravity (Gemini IDE) | `~/.gemini/config/plugins/everything-backend-plugin/skills/<skill-name>/SKILL.md` | `plugin.json` (name, version) |
+| Cursor | `~/.cursor/skills/<skill-name>/SKILL.md` | — |
+| Opencode / generic | `~/.agents/skills/<skill-name>/SKILL.md` | — |
+| Per-project | `<project-path>/.agents/skills/<skill-name>/SKILL.md` | — |
+| `--target <path>` | `<path>/<skill-name>/SKILL.md` | — |
+
+`_shared/` selalu ditempatkan di samping folder skill (misalnya `~/.agents/skills/_shared/`). Folder skill yang sudah ada dilewati kecuali Anda memberikan `--force`.
 
 ## Opencode 中的使用 / Usage in Opencode
 
@@ -112,23 +120,40 @@ Setelah instalasi, skill tersedia berdasarkan nama. Contoh:
 - `backend-api-design` — merancang endpoint dan skema
 - `backend-visualize` — menggambar ERD, class diagram, diagram arsitektur, dan lainnya
 - `backend-implement` — mengubah desain menjadi kode
+- `backend-refactor` — merestrukturisasi kode yang ada tanpa mengubah perilaku
 - `backend-test` — menambah atau memperluas tes
 - `backend-auth` — menambah autentikasi dan otorisasi
 - `backend-doctor` — menjalankan health check backend
+
+## Apa yang dilakukan skill di proyek Anda
+
+- **File memori**: skill menulis memori proyek (overview, tech stack, keputusan, issue terbuka) ke `.opencode/everything-backend-memory/` di proyek Anda, serta checkpoint dan patch run ke `.opencode/everything-backend-memory/.checkpoints/`. Tambahkan folder checkpoint ke `.gitignore`.
+- **Mode auto adalah default**: agen membaca kode dan menjalankan perintah lokal yang hermetis (lint, type-check, build, unit test, audit dependensi read-only) tanpa bertanya.
+- **Agen selalu bertanya dulu** sebelum menerapkan migrasi atau mengubah basis data; git commit, pindah branch, reset, clean, stash, rebase, merge, atau push; menghapus atau menimpa file yang tidak dibuatnya; menginstal, meng-upgrade, atau menghapus dependensi; deploy, push image, IaC apply, rotasi secret, atau panggilan API eksternal berbayar; mengedit file CI/CD atau file rahasia; serta menjalankan tes atau aplikasi terhadap basis data, queue, atau layanan yang tidak terbukti lokal. Agen tidak pernah melewati atau melemahkan tes yang gagal agar lulus.
+- **Mode interaktif**: katakan "ask me before each step" untuk menyetujui setiap langkah sendiri.
 
 ## 开发 / Development
 
 Untuk menguji installer tanpa menyentuh direktori global Anda yang sebenarnya:
 
 ```bash
-node scripts/install.js --dry-run
+node scripts/install.js --dry-run --target ./tmp-skills
 node scripts/install.js --target ./tmp-skills --force
+rm -rf ./tmp-skills   # hapus hasil instalasi uji; jangan di-commit
+npm run check
 ```
+
+`npm run check` (juga dijalankan saat `prepublishOnly`) memverifikasi bahwa path `bin` dan `files` ada, setiap skill memiliki frontmatter yang valid, setiap skill tercantum di `README.md` dan di `backend-orchestrator`, dan setiap file `_shared/` yang dirujuk ada.
 
 ## 仓库布局 / Repository layout
 
 ```text
-.agents/skills/        Skill definitions
-scripts/install.js     NPX/local installer
-.opencode/             Project-local Opencode metadata
+.agents/skills/            Definisi skill (satu folder per skill)
+.agents/skills/_shared/    Dokumen referensi bersama untuk semua skill
+scripts/install.js         Installer NPX/lokal
+scripts/check-package.js   Pemeriksaan konsistensi paket dan skill (npm run check)
+docs/                      Laporan audit
+.github/                   Template issue dan pull request
 ```
+
+`.opencode/` bukan bagian dari repositori ini: skill membuat `.opencode/everything-backend-memory/` di dalam proyek Anda saat dijalankan.

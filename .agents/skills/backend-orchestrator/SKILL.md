@@ -13,7 +13,7 @@ Activate this skill when the user asks for backend help without naming a specifi
 
 - `backend-scan` — Explore an existing backend project and keep memory files in sync.
 - `backend-architect` — Plan backend architecture and tech stack.
-- `backend-db-design` — Design database schemas and migrations.
+- `backend-db-design` — Design target database schemas and migration plans (no migration files).
 - `backend-api-design` — Design API endpoints and contracts.
 - `backend-implement` — Generate or modify backend code.
 - `backend-test` — Design and generate tests.
@@ -21,7 +21,7 @@ Activate this skill when the user asks for backend help without naming a specifi
 - `backend-doctor` — Run health checks and code reviews.
 - `backend-ops` — Design observability, caching, async messaging, and config.
 - `backend-deploy` — Set up deployment, containers, and CI/CD.
-- `backend-migrate` — Plan and execute database schema evolution.
+- `backend-migrate` — Evolve database schemas; the only skill that writes and applies migration files.
 - `backend-visualize` — Generate Mermaid diagrams (ERD, class, actor, flowchart, sequence, architecture).
 - `backend-refactor` — Behavior-preserving refactoring: split fat controllers/services, extract modules, reduce coupling, dependency inversion, strangler-fig, modernize legacy.
 
@@ -57,31 +57,35 @@ Use when adding a significant feature to an existing backend.
 
 1. **`backend-scan`** (if `.opencode/everything-backend-memory/` is empty or stale)
    - Reads/writes: `project-overview.md`, `tech-stack.md`, `api-patterns.md`, `db-schema.md`, `decisions.md`, `issues.md`
-   - Branching: If scan cannot locate or read the project → escalate to user with the specific path/permission error. If memory files exist but are partially stale → re-run with `mode=sync` instead of full scan.
+   - Branching: If scan cannot locate or read the project → escalate to user with the specific path/permission error. If memory files exist but are partially stale → re-run with `scope=sync` instead of full scan.
 2. **`backend-db-design`**
    - Reads: `tech-stack.md`, `project-overview.md`, `db-schema.md`
-   - Writes: `db-schema.md`, migration files
+   - Writes: `db-schema.md` (target schema), migration plan (handed to step 3)
    - Branching: If the feature requires a schema change discovered mid-design → re-run from step 2 with the new requirement. If the schema design conflicts with existing tables → escalate to user.
-3. **`backend-api-design`**
+3. **`backend-migrate`** (only if the feature changes the schema)
+   - Reads: migration plan from step 2, `db-schema.md`, `tech-stack.md`, `decisions.md`, existing migrations
+   - Writes: migration files, `db-schema.md`, `decisions.md` (migration conventions, scheduled contract steps)
+   - Branching: Applying migrations follows `_shared/tool-rules.md` → Always Ask First, also in `mode=auto`; generating files does not. If the plan needs expand/contract across releases → record the later contract step in `decisions.md` and continue with the expand phase only. If the plan cannot be applied safely (locks, data loss, conflicting existing data) → loop back to step 2 with the specific constraint.
+4. **`backend-api-design`**
    - Reads: `tech-stack.md`, `project-overview.md`, `api-patterns.md`
    - Writes: `api-patterns.md`, OpenAPI/endpoint docs
-   - Branching: If API design needs a schema that was not defined in step 2 → loop back to step 2 (`backend-db-design`). If existing API patterns conflict with the new design → escalate to user.
-4. **`backend-auth`** (only if the feature needs auth, permissions, sessions, or JWT)
+   - Branching: If API design needs a schema that was not defined in step 2 → loop back to step 2 (`backend-db-design`), then step 3 (`backend-migrate`). If existing API patterns conflict with the new design → escalate to user.
+5. **`backend-auth`** (only if the feature needs auth, permissions, sessions, or JWT)
    - Reads: `tech-stack.md`, `project-overview.md`, `api-patterns.md`
    - Writes: `decisions.md`
-   - Branching: If auth design reveals an API contract change → loop back to step 3 (`backend-api-design`). If auth conflicts with project-overview constraints → escalate to user.
-5. **`backend-implement`**
+   - Branching: If auth design reveals an API contract change → loop back to step 4 (`backend-api-design`). If auth conflicts with project-overview constraints → escalate to user.
+6. **`backend-implement`**
    - Reads: `tech-stack.md`, `api-patterns.md`, `db-schema.md`
-   - Writes: source code, tests
-   - Branching: If implementation uncovers a missing schema field or relationship → loop back to step 2 (`backend-db-design`), then step 3 (`backend-api-design`), then resume. If a design flaw is found → loop back to the relevant design step with the specific gap noted. If a schema change is requested after implementation has started → loop back to `backend-db-design`, then `backend-migrate`, then resume step 5.
-6. **`backend-test`**
+   - Writes: source code, tests (schema changes are handed to `backend-migrate`, never written here)
+   - Branching: If implementation uncovers a missing schema field or relationship → loop back to step 2 (`backend-db-design`), then step 3 (`backend-migrate`), then step 4 (`backend-api-design`), then resume step 6. If a design flaw is found → loop back to the relevant design step with the specific gap noted. If a schema change is requested after implementation has started → loop back to `backend-db-design`, then `backend-migrate`, then resume step 6.
+7. **`backend-test`**
    - Reads: `tech-stack.md`, `api-patterns.md`
    - Writes: test files, coverage reports
-   - Branching: If tests fail on the implementation (not on test bugs) → re-run from step 5 (`backend-implement`) with the failing test details. If coverage is below the project target → re-run from step 6 with additional tests.
-7. **`backend-doctor`**
+   - Branching: If tests fail on the implementation (not on test bugs) → re-run from step 6 (`backend-implement`) with the failing test details. If coverage is below the project target → re-run from step 7 with additional tests.
+8. **`backend-doctor`**
    - Reads: `tech-stack.md`, `project-overview.md`, `api-patterns.md`
    - Writes: `issues.md` (new findings)
-   - Branching: If Critical findings → STOP. Fix issues, re-run from step 5. If High findings → present to user; continue only after acknowledgment. If Medium/Low → note in issues.md and complete the workflow.
+   - Branching: If Critical findings → STOP. Report them, fix through the skill that owns the issue (for example `backend-implement`, `backend-auth`, `backend-migrate`), then re-run step 8 (`backend-doctor`). If High findings → present to user; continue only after acknowledgment. If Medium/Low → note in issues.md and complete the workflow.
    - Completion criteria: All Critical and High findings resolved (or explicitly accepted by the user), Medium/Low findings logged to `issues.md`, and the feature is ready for review or merge.
 
 ### Quick Add Endpoint
@@ -117,28 +121,28 @@ Use before launch or before declaring a service production-ready.
 3. **`backend-doctor`**
    - Reads: `tech-stack.md`, `project-overview.md`, `api-patterns.md`
    - Writes: `issues.md`
-   - Branching: If Critical findings → STOP. Fix issues, re-run from step 5. If High findings → present to user; continue only after acknowledgment. If Medium/Low → note in issues.md and complete the workflow.
+   - Branching: If Critical findings → STOP. Report them, fix through the skill that owns the issue (for example `backend-ops`, `backend-deploy`, `backend-auth`, `backend-implement`), then re-run step 3 (`backend-doctor`). If High findings → present to user; continue only after acknowledgment. If Medium/Low → note in issues.md and complete the workflow.
    - Completion criteria: All Critical and High findings resolved (or explicitly accepted by the user), Medium/Low findings logged to `issues.md`, and the service is deemed production-ready by the user.
 
 ### Memory Refresh
 
 Use when memory files may be out of sync with the codebase.
 
-1. **`backend-scan`** with `mode=sync`
+1. **`backend-scan`** with `scope=sync`
    - Reads: existing `.opencode/everything-backend-memory/*.md`
    - Writes: updated `project-overview.md`, `tech-stack.md`, `api-patterns.md`, `db-schema.md`, `decisions.md`, `issues.md`
    - Branching: If sync cannot locate the project or memory directory → escalate to user with the specific path error. If a memory file is corrupt or unreadable → escalate to user; do not silently drop it.
 2. **`backend-doctor`**
    - Reads: refreshed memory files
    - Writes: `issues.md`
-   - Branching: If Critical findings → STOP. Fix issues, re-run from step 5. If High findings → present to user; continue only after acknowledgment. If Medium/Low → note in issues.md and complete the workflow.
+   - Branching: If Critical findings → STOP. Report them, fix through the skill that owns the issue (for example `backend-implement`, `backend-auth`, `backend-migrate`), then re-run step 2 (`backend-doctor`). If High findings → present to user; continue only after acknowledgment. If Medium/Low → note in issues.md and complete the workflow.
    - Completion criteria: All memory files reflect the current codebase, all Critical and High findings resolved (or explicitly accepted by the user), and Medium/Low findings are logged to `issues.md`.
 
 ## Branching & Failure Rules
 
 These rules apply generically across all four workflows. Individual steps may add workflow-specific branches, but the baseline is:
 
-- Critical findings: STOP. Re-run from the step that can fix them.
+- Critical findings: STOP. Fix through the skill that owns the issue, then re-run that workflow's `backend-doctor` step.
 - High findings: pause for user decision (redesign vs patch).
 - Medium/Low findings: log to `issues.md` and continue.
 - A design flaw discovered mid-implementation → loop back to the design step (`backend-api-design` or `backend-db-design`) with the specific gap noted.

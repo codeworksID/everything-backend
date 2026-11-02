@@ -20,8 +20,8 @@ See `_shared/context-loading.md` for standard prerequisites (project root check,
 Architect-specific additions:
 
 - REQUIRED: `_shared/principles.md` loaded and applied
-  - Check: `read .agents/skills/_shared/principles.md` succeeds and the file is non-empty
-  - If missing: stop and ask the user to confirm the install location of the shared references
+  - Check: resolve `_shared/principles.md` as described in `_shared/context-loading.md` → Resolving `_shared/` Files (sibling of this skill's folder first) and confirm the file is non-empty
+  - If missing or empty: warn once and continue with this skill's own rules; do not stop
 - REQUIRED: problem statement and constraints gathered
   - Check: ask the user "What problem does this backend solve?" and confirm a non-empty answer
   - If missing: stop and ask the user to provide the problem statement before proceeding
