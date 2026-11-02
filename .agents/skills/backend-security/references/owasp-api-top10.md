@@ -1,0 +1,161 @@
+# OWASP API Security Top 10 (2023) Review
+
+Read this in Step 3. For each item: run the searches (search file contents; `rg -n` patterns shown, case-insensitive where noted), read every hit in context with its middleware, decide, and record a verdict.
+
+Verdicts: **pass** (state what you checked), **finding** (list finding IDs), **not applicable** (state why). A search hit alone is never a finding.
+
+Exclude `node_modules`, `vendor`, `.venv`, `venv`, `dist`, `build`, generated clients and migrations from searches (`rg` honors `.gitignore`; add `-g '!<dir>'` for the rest).
+
+Stack hints used below: **Node** (Express, Fastify, NestJS, Prisma, TypeORM, Sequelize, Mongoose), **Py** (FastAPI, Django/DRF, Flask, SQLAlchemy), **Go** (net/http, chi, gin, gorm, sqlx), **Java** (Spring, JPA).
+
+## API1: Broken Object Level Authorization (BOLA / IDOR)
+
+Risk: a user reads or changes another user's or tenant's object by changing an ID.
+
+Search:
+- Routes with object IDs: `:id`, `:[a-z]+Id`, `\{[a-z_]*id\}` in route files; `@(Get|Put|Patch|Delete)Mapping\(.*\{`; `@(app|router)\.(get|put|patch|delete)\(.*\{`; `\.(get|put|patch|delete)\(['\"][^'\"]*:`.
+- Fetch by ID without owner or tenant filter: `findUnique\(\{\s*where:\s*\{\s*id`, `findById\(`, `findByPk\(`, `findOne\(\{\s*where:\s*\{\s*id`, `\.get\(\w+,\s*\w*id\)` (SQLAlchemy `session.get`), `objects\.get\(pk=`, `objects\.get\(id=`, `First\(&\w+,\s*\w*[iI][dD]\)`, `findById\(` (JPA), raw `WHERE id = ` without `tenant_id`/`owner_id`/`user_id`.
+
+Read: for every `/{id}` route, the handler, service and query. Find where the principal (`req.user`, `current_user`, `ctx.Value`, `@AuthenticationPrincipal`) is compared with the object's owner or tenant.
+
+Pass when: every object route scopes the query by owner or tenant (or checks it after load and returns 404/403), including list, update, delete, export and nested routes. Row-level security or a repository that always injects the tenant counts if you confirm it cannot be bypassed.
+
+Fix: scope queries by principal (`where: { id, ownerId: user.id }`), central policy check, 404 for objects of other tenants. Owner: `backend-auth` (policy design) or `backend-debug` (missing check in one handler).
+
+## API2: Broken Authentication
+
+Risk: attackers impersonate users through weak login, token or session handling.
+
+Search:
+- JWT misuse: `jwt\.decode\(` (without verify), `verify_signature['\"]?\s*:\s*False`, `options=\{[^}]*verify`, `ignoreExpiration`, `algorithms?\s*[:=]\s*\[?['\"]none`, `ParseUnverified`, `alg.*none` (case-insensitive), `HS256` next to a public key.
+- Weak hashing: `md5|sha1|sha256\(` near `password`, `createHash\(['\"](md5|sha1)`, `hashlib\.(md5|sha1)`, plain comparison `password\s*===?\s*`.
+- Tokens in URLs: `[?&](token|api_key|apikey|access_token)=`, `req\.query\.(token|apiKey)`.
+- Login throttling: rate limiter applied to login, reset, OTP routes (`express-rate-limit`, `@nestjs/throttler`, `slowapi`, `django-ratelimit`, `bucket4j`, `tollbooth`).
+- Session handling: session ID regenerated on login (`req.session.regenerate`, `cycle_key`, `changeSessionId`), cookie flags (see config reference).
+
+Read: the auth middleware, token verification, login, logout, refresh, password reset and MFA code paths. Compare with `backend-auth` -> references/verification-and-review.md (negative-test matrix) if that skill is installed.
+
+Pass when: tokens are verified with a pinned algorithm, issuer, audience and expiry; passwords use argon2id, bcrypt or scrypt; login, reset and OTP are throttled; reset tokens are single-use and expire; sessions rotate on login and die on logout.
+
+Fix owner: `backend-auth`.
+
+## API3: Broken Object Property Level Authorization
+
+Two halves: **mass assignment** (client writes fields it should not) and **excessive data exposure** (server returns fields it should not).
+
+Search, mass assignment:
+- Node: `\.\.\.req\.body`, `Object\.assign\(\w+,\s*req\.body`, `data:\s*req\.body`, `\.create\(req\.body`, `\.update\(req\.body`, `new \w+\(req\.body\)`, `\.set\(req\.body`.
+- Py: `\*\*(request\.data|payload|body|data)\b`, `\.model_dump\(\)|\.dict\(\)` passed into a model constructor, `fields\s*=\s*['\"]__all__`, `setattr\(\w+,\s*k(ey)?,`.
+- Java: `@RequestBody\s+\w+Entity`, `@RequestBody` binding a JPA `@Entity` class directly; `BeanUtils\.copyProperties\(.*request`.
+- Go: `json\.NewDecoder\(r\.Body\)\.Decode\(&\w+\)` into a DB model, `ShouldBindJSON\(&\w+\)` into a gorm model, `Updates\(\w+\)` with a map from the request.
+- Rails-style: `permit!`.
+
+Search, data exposure:
+- Returning ORM objects directly: `res\.(json|send)\(\w*(user|account|customer)`, `return \w+` from handlers without a response schema (FastAPI routes without `response_model`), `serializers\.ModelSerializer` with `__all__`, `toJSON` absent on entities with secrets.
+- Sensitive fields: `password(_hash)?|passwordHash|secret|token|mfa|ssn|api_?key` in response DTOs or serializers.
+- GraphQL: types exposing internal fields without field-level resolvers checks.
+
+Pass when: create and update bodies are explicit allowlists (DTO, schema, `pick`), server-owned fields (`id`, `role`, `isAdmin`, `tenantId`, `ownerId`, `status`, `balance`) are never taken from the body, and responses use explicit output schemas.
+
+Fix owner: `backend-api-design` (contract allowlist) plus `backend-debug` (handler fix).
+
+## API4: Unrestricted Resource Consumption
+
+Search:
+- Body limits: `express\.json\(\)` without `limit`, `bodyParser`, `bodyLimit` (Fastify), `client_max_body_size`, `DATA_UPLOAD_MAX_MEMORY_SIZE`, `MaxBytesReader`, `spring\.servlet\.multipart\.max-`.
+- Pagination: `limit|pageSize|per_page|take` read from the query without a maximum (`Math\.min`, `le=`, `max\(`).
+- Rate limiting: limiter libraries listed in API2; gateway or ingress rate limits in deploy config.
+- Timeouts: outbound HTTP clients without timeouts (`axios\.create\(` without `timeout`, `requests\.(get|post)\(` without `timeout=`, `http\.Client\{` without `Timeout`), DB statement timeouts.
+- Expensive work per request: regex built from input (`new RegExp\(req`, `re\.compile\(.*request`), image or PDF processing, zip extraction, bulk endpoints without item caps, GraphQL depth or cost limits (`depthLimit`, `graphql-cost-analysis`, `max_depth`).
+- Paid side effects: SMS, email or AI calls triggered per request without per-user quotas.
+
+Pass when: body size, page size, array and string lengths, upload size, timeouts and per-client rate limits all have explicit bounds, and paid side effects have quotas.
+
+Fix owner: `backend-implement` (limits in code), `backend-ops` (rate-limit infra, WAF).
+
+## API5: Broken Function Level Authorization (BFLA)
+
+Search:
+- Admin and internal routes: `/admin`, `/internal`, `/debug`, `/ops`, `/manage`, `isAdmin`, `role\s*===?`, `hasRole|hasAuthority|@PreAuthorize|@Roles\(|permission_classes|Depends\(.*(admin|role)`, `RequireRole`.
+- Routes registered before or outside the auth middleware: read the router setup order (`app\.use\(auth` vs route registration), Nest guards (`@UseGuards`, global guards), FastAPI dependencies at router level, Spring `SecurityFilterChain` matchers (`permitAll\(\)`, `anyRequest\(\)`).
+- Method gaps: a `GET` protected but `DELETE`/`PUT` on the same path is not.
+
+Read: build a table of route -> required role. Compare it with `api-patterns.md` access rules.
+
+Pass when: every privileged function has a server-side role or permission check, the default is deny, and no admin route relies on being hidden.
+
+Fix owner: `backend-auth`.
+
+## API6: Unrestricted Access to Sensitive Business Flows
+
+Identify flows that hurt the business when automated: signup, referral or coupon redemption, checkout, ticket or stock reservation, password reset, OTP send, invitations, voting, reviews, posting content.
+
+Search: route names and handlers for `signup|register|coupon|redeem|checkout|reserve|invite|otp|verify|reset|referral|vote|review`.
+
+Read: whether each flow has per-account and per-IP or device limits, quotas, idempotency, anti-automation (CAPTCHA or proof of work where it fits), and alerts for abuse.
+
+Pass when: each sensitive flow has limits matched to its business risk, or the threat model accepts the risk with a reason.
+
+Fix owner: `backend-implement`, with `backend-ops` for alerting.
+
+## API7: Server-Side Request Forgery (SSRF)
+
+Search outbound calls whose URL or host can come from input:
+- Node: `fetch\(|axios(\.\w+)?\(|got\(|request\(|http\.get\(|undici`.
+- Py: `requests\.(get|post|request)\(|httpx\.|urllib\.request|aiohttp`.
+- Go: `http\.(Get|Post|NewRequest)|client\.Do\(`.
+- Java: `RestTemplate|WebClient|HttpClient|new URL\(`.
+- Features: webhook target URLs, "import from URL", avatar or image fetch, link previews, PDF or HTML rendering (headless browsers), XML parsers with external entities.
+
+Read: trace the URL back to its source. If it comes from a request, a DB field users can set, or a third-party response, check the guard.
+
+Pass when: user-influenced URLs go through an allowlist of schemes and hosts, or a guard that resolves DNS and blocks private, loopback, link-local (`169.254.169.254`) and IPv6 equivalents at connect time; redirects are off or re-checked; responses are not echoed raw; timeouts and size caps exist.
+
+Fix owner: `backend-debug` (guard in the call path) or `backend-implement` (shared safe HTTP client).
+
+## API8: Security Misconfiguration
+
+Run the checklist in `config-and-privacy.md` -> Configuration (CORS, headers, TLS, cookies, debug, error leakage, logging, container). The verdict follows from those results.
+
+Fix owner: `backend-implement` for app config, `backend-deploy` for ingress and container config.
+
+## API9: Improper Inventory Management
+
+Search and compare:
+- Routes in code (Step 1 list) vs the OpenAPI spec and `api-patterns.md` inventory: undocumented routes, documented routes that no longer exist.
+- Old versions still mounted: `/v0`, `/v1` beside `/v2`, `legacy`, `deprecated`.
+- Test and debug endpoints in production code: `/test`, `/debug`, `/seed`, `/reset`, `__debug__`, `actuator`, `/metrics` exposed publicly.
+- API docs and consoles reachable in production: `swagger-ui`, `/docs`, `/redoc`, `graphiql`, `playground`, introspection.
+- Non-production environments using production data or secrets (from `deployment.md` and env files).
+
+Pass when: the inventory matches the code, retired versions are removed or have a sunset date, and debug and docs surfaces are disabled or protected in production.
+
+Fix owner: `backend-api-design` (inventory, deprecation), `backend-deploy` (environment exposure).
+
+## API10: Unsafe Consumption of APIs
+
+Search third-party integrations (payment, email, maps, AI, partner APIs) using the outbound-call patterns from API7, plus SDK clients.
+
+Read:
+- Responses are validated against a schema before use; no blind trust because the source is "a partner".
+- TLS verification is on (`rejectUnauthorized:\s*false`, `verify\s*=\s*False`, `InsecureSkipVerify:\s*true`, `NODE_TLS_REJECT_UNAUTHORIZED` are findings).
+- Timeouts, retries with backoff and circuit breaking exist; redirects are not followed blindly.
+- Data from third parties is never passed into SQL, shell, templates or file paths unescaped.
+- Inbound webhooks verify signatures (see below).
+
+Pass when: every integration validates input, verifies TLS, and has timeouts.
+
+Fix owner: `backend-implement`; resilience patterns with `backend-ops`.
+
+## Beyond the Top 10
+
+Check these in the same pass. Map findings to the closest Top 10 item or mark them "other".
+
+- **Injection**: string-built SQL (`query\(\`.*\$\{`, `execute\(f['\"]`, `\+ *req\.`, `\$queryRawUnsafe`, `raw\(`, `text\(f`, `fmt\.Sprintf\(.*SELECT`), NoSQL operators from input (`\$where`, `find\(req\.body`), shell (`exec\(|execSync\(|spawn\(.*shell:\s*true|subprocess.*shell=True|os\.system|Runtime\.getRuntime\(\)\.exec`), template injection (`render_template_string`, user-controlled template names). Pass when all are parameterized or use argument arrays.
+- **Unsafe deserialization**: `pickle\.loads|yaml\.load\(|marshal\.loads|ObjectInputStream|node-serialize|unserialize\(|jsonpickle|XMLDecoder` (for `yaml.load`, a finding only without `Loader=SafeLoader`), XML parsers with external entities enabled.
+- **Path traversal**: file paths built from input (`path\.join\(.*req\.|open\(.*request\.|os\.Open\(.*r\.`, `sendFile\(`, `FileResponse\(`). Pass when the resolved path is checked to stay under a base directory.
+- **File uploads**: size limits, type checked by content (magic bytes) not only extension, files stored outside the web root or in private buckets, `Content-Disposition: attachment` on download, malware scanning where users share files.
+- **Crypto misuse**: `Math\.random\(\)` or `random\.` for tokens, ECB mode, static IVs, hard-coded keys, `crypto\.createCipher\(` (deprecated, no IV).
+- **Webhook verification**: signature check with constant-time compare (`timingSafeEqual`, `hmac\.compare_digest`, `hmac\.Equal`), timestamp tolerance, event ID stored for replay protection, raw body used for the signature.
+- **Open redirects**: `res\.redirect\(req\.(query|body)`, `RedirectResponse\(.*request`, `next=` parameters without an allowlist.
+- **CSRF** on cookie-authenticated state-changing routes: covered by `backend-auth`; record the verdict here under API2.

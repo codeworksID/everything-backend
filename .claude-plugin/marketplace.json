@@ -1,0 +1,13 @@
+{
+  "name": "codeworks",
+  "owner": {
+    "name": "CodeWorks"
+  },
+  "plugins": [
+    {
+      "name": "everything-backend",
+      "source": "./",
+      "description": "Backend engineering skills (architecture, database, migrations, API, auth, testing, debugging, security, ops, deploy) with a guard hook for destructive commands."
+    }
+  ]
+}

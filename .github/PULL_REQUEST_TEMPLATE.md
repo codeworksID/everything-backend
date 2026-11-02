@@ -32,6 +32,8 @@
 - [ ] `backend-api-design`
 - [ ] `backend-implement`
 - [ ] `backend-refactor`
+- [ ] `backend-debug`
+- [ ] `backend-security`
 - [ ] `backend-test`
 - [ ] `backend-auth`
 - [ ] `backend-ops`
@@ -39,6 +41,7 @@
 - [ ] `backend-migrate`
 - [ ] `backend-doctor`
 - [ ] Installer (`scripts/install.js`)
+- [ ] Claude Code plugin, guard hook or scripts (`.claude-plugin/`, `hooks/`, `_shared/scripts/`)
 - [ ] None of the above
 
 ## How has this been tested?

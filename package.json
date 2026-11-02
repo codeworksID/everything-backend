@@ -1,7 +1,7 @@
 {
   "name": "everything-backend",
-  "version": "0.3.0",
-  "description": "Reusable Opencode backend skills with an installable CLI.",
+  "version": "0.4.0",
+  "description": "Backend engineering Agent Skills for Claude Code, Claude.ai, OpenCode, Cursor and Antigravity, with an installable CLI and a Claude Code plugin.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -16,7 +16,10 @@
     "skills",
     "backend",
     "cli",
-    "npx"
+    "npx",
+    "claude-code",
+    "claude-skills",
+    "agent-skills"
   ],
   "bin": {
     "everything-backend": "scripts/install.js"
@@ -31,7 +34,9 @@
     "install:skills": "node ./scripts/install.js",
     "install:skills:dry": "node ./scripts/install.js --dry-run --target ./tmp-skills",
     "check": "node ./scripts/check-package.js",
-    "prepublishOnly": "node ./scripts/check-package.js"
+    "test": "node ./scripts/test-scripts.js",
+    "build:claude": "node ./scripts/build-claude-skills.js",
+    "prepublishOnly": "node ./scripts/check-package.js && node ./scripts/test-scripts.js"
   },
   "engines": {
     "node": ">=18"

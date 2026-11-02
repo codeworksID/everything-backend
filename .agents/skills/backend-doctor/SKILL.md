@@ -1,341 +1,164 @@
 ---
 name: backend-doctor
-description: "Run execution-based health checks on backend code: tests, lint/type checks, dependency audits, smoke tests, LSP diagnostics, and static anti-pattern scans. Identifies issues with severity levels and provides evidence-backed recommendations. Use this skill when the user says 'check my backend', 'health check', 'review code', 'doctor', or before deployment."
+description: "Runs execution-based health checks on an existing backend: build, tests, coverage, lint and type checks, dependency audits, a local smoke test, and a scan for obvious code anti-patterns, then reports evidence-backed findings with severities and the skill that should fix each one. Diagnose-only: it never edits code or installs packages. Use it when the user says check my backend, run doctor, health check, review my code, what's wrong with this service, or before a release or after a large change. Supports mode=review to check only the files changed against the base branch, for example a pull request. Not for a security review, threat model or OWASP audit (use backend-security), fixing a specific bug (backend-debug), or adding health endpoints (backend-ops)."
 ---
 
 # Backend Doctor
 
-## When to Activate
+Run the project's own checks, collect evidence, and report what is wrong, how bad it is, and which skill should fix it. Doctor diagnoses. It does not fix.
 
-- User wants to check backend health.
-- User says "check my backend", "health check", "review code", "doctor".
-- Before deployment or after major changes.
-- User asks "is my code secure?" or "are there performance issues?".
+## When to Use
 
-## Prerequisites
+- "Check my backend", "health check", "run doctor", "review my code", "what's wrong with this service".
+- Before a release, at the end of an orchestrator workflow, or after a large change or refactor.
+- `mode=review`: review a branch or pull request, scoped to the changed files.
 
-See `_shared/context-loading.md` for standard prerequisites (project root check, manifest detection, memory file presence, fallback rules, and context priority list). All checks use OpenCode-native tools and work cross-platform.
+Not for:
 
-Doctor-specific prerequisites:
+- Security review, threat modeling, OWASP API Top 10, secret history scans, supply chain: backend-security. Doctor runs the dependency audit and flags obvious static issues, then recommends backend-security.
+- Fixing a known bug or a performance regression: backend-debug.
+- Adding health routes, metrics, timeouts or retries: backend-ops.
 
-- **REQUIRED**: `issues.md` must be loaded alongside the standard priority files. Health checks use it to validate whether known issues have regressed or been resolved.
-- If any standard prerequisite fails, follow the recovery rules in `_shared/context-loading.md` (run `backend-scan` with `mode=auto`, then re-check). If the missing file is a project file that `backend-scan` cannot create, stop and ask the user. A missing `_shared/` file is not a failure: warn once and continue (see `_shared/context-loading.md` → Resolving `_shared/` Files).
+## Before You Start
 
-## Context Loading
+1. Resolve the shared docs folder ("<shared>"): first `_shared/` inside this skill's folder (bundled installs, e.g. Claude.ai), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
+2. Read `<shared>/tool-rules.md` (mode=auto contract, Production Targets, Test Integrity, Command Time Budgets, checkpoints) and `<shared>/host-tools.md` if the actions below don't map clearly to your host's tools. Read `<shared>/principles.md` (what findings are measured against) and the issues.md section of `<shared>/memory-schema.md`.
+3. Load project memory per `<shared>/context-loading.md`: always `project-overview.md` and `tech-stack.md`; `api-patterns.md` and `db-schema.md` when the project has endpoints or a database; `test-strategy.md` if it exists; `decisions.md` only when a finding contradicts or depends on a recorded decision. Also load `issues.md` if it exists, to check known issues. A missing `issues.md` is normal; doctor creates it in Step 9. If all memory is missing, follow the Missing-Memory Rule there (in `mode=auto`, run backend-scan first).
+4. If the detected stack matches a file in `<shared>/stacks/`, read it.
 
-Before running checks, read project memory for existing context:
+Doctor-specific checks:
 
-- `project-overview.md` — project type and structure
-- `tech-stack.md` — languages, frameworks, test commands
-- `api-patterns.md` — API conventions and endpoint hot paths
-- `db-schema.md` — database schema for data-integrity checks
-- `decisions.md` — prior architecture and operational decisions
-- `issues.md` — known issues and TODOs to validate or expand
+- A manifest or source folder exists. If not, stop and ask for the project path; doctor has nothing to check.
+- Without a shell (e.g. some sandboxes), do the static checks only, report every dynamic check as "not run: no shell", and give the user the exact commands.
 
-If memory is stale or empty, run `backend-scan` first to build context.
+## References
 
-## Required Context
+- `references/commands.md`: read in Step 1 to pick test, coverage, build, lint, audit and migration-status commands per stack, package manager and Python environment.
+- `references/smoke-test.md`: read before Step 6 (start command, port, health route discovery, Bash and PowerShell start/poll/stop).
+- `references/static-checks.md`: read before Step 7 (injection sinks per stack, secret search and masking, bandit flags, architecture, performance and resilience checks).
+- `references/output-format.md`: read in Step 8 (the output template, the grading rubric and recommendation patterns per finding type).
 
-Ranked by priority for a health-check run:
+## Inputs
 
-1. **`tech-stack.md`** — required. Determines manifest, test/lint/audit commands, and stack-specific anti-patterns.
-2. **`project-overview.md`** — required. Provides architecture shape, entry points, and critical paths.
-3. **`api-patterns.md`** — required. Exposes endpoint conventions, hot paths, and existing error contracts.
-4. **`db-schema.md`** — optional. Use when the project has a database and the check includes query or data-integrity risks.
-5. **`decisions.md`** — skip unless the findings raise architecture questions (for example, a god service or inconsistent layering that contradicts a prior decision).
-6. **`issues.md`** — optional. Use to validate whether known issues have regressed or been resolved.
+- Run mode: `mode=auto` (default) or `mode=interactive`, exactly as defined in `<shared>/tool-rules.md` -> `mode=auto` Contract.
+- `mode=review` (optional) selects diff scope. It is a scope, not a run mode: the run is still auto unless the user asks for interactive. Optional `base=<branch>`.
+- `path=<dir>` (optional): the service to check in a monorepo.
 
-## Before Running Checks
+## Rules
 
-1. Confirm the project root and working directory.
-2. If the project is unfamiliar, run `backend-scan` first to build context.
-3. Read the manifest files (`package.json`, `pyproject.toml`, `go.mod`, `pom.xml`, `Makefile`) to detect which commands the project actually exposes.
+- **Diagnose only.** Doctor does not edit source, tests, config or manifests, and never installs, upgrades or removes packages (no `npm audit fix`, no `npx` downloads, no `pip install`). Its only writes are `issues.md` and, if the user asks, a saved copy of the output.
+- **Every finding names a Next skill** that owns the fix (backend-implement, backend-auth, backend-debug, backend-test, backend-migrate, backend-ops, backend-deploy, backend-refactor, backend-security). Doctor applies a fix only if the user asks for that specific fix after seeing the findings; prefer handing it to the owning skill.
+- **Evidence or it did not happen.** A check that failed to run, was skipped, or timed out is reported as "not run" or "did not complete" with the reason, never as a pass.
+- **Mask secrets** everywhere: show kind, location, first 4 characters and length only (see `references/static-checks.md` -> Masking).
+- **No production targets.** Tests, the smoke test and migration status run only after the Target Check passes.
 
-### mode=auto
+## Severity
 
-Follow the shared `mode=auto` contract in `_shared/tool-rules.md`.
+This is the scale for doctor's findings. Other skills (backend-ops, the orchestrator's gates) refer to it.
 
-If the user says "run doctor" or "check my backend", proceed through the prerequisites and checks without asking for confirmation, within these limits:
+| Severity | Examples |
+|---|---|
+| Critical | Failing build; authentication bypass; confirmed injection (SQL, command, template); a committed live secret; data-loss or broken-invariant risk; a known exploitable vulnerability in a production dependency |
+| High | Failing tests on critical paths (auth, payments, persistence); missing ownership or authorization check; missing validation on create, update, auth or payment endpoints; high-severity vulnerability in a production dependency; app fails to start from a code error; health route returns non-2xx; pending or diverged migrations; god service or business rules duplicated across endpoints; type errors that can fail at runtime |
+| Medium | Weak layering; N+1 or unbounded queries; inconsistent error mapping; missing health route; outbound calls without timeouts; environment or setup failures; flaky tests; vulnerabilities in dev-only dependencies; missing tests on critical paths; a tool that is missing or failed to run (category "Tooling") |
+| Low | Naming, documentation, minor duplication, cosmetic lint warnings, non-critical observability gaps |
 
-- Doctor diagnoses and reports. It does not edit source, tests, config, or manifests, and it does not install, upgrade, or remove dependencies in `mode=auto`.
-- Every finding names the skill that owns the fix (**Next skill**, e.g. `backend-implement`, `backend-test`, `backend-auth`, `backend-migrate`, `backend-deploy`). Fixes are applied by that skill, or by doctor only after the user confirms the specific fix.
-- Run tests and start the app only after the Target Check below passes; otherwise ask.
-- Long commands follow `_shared/tool-rules.md` → Command Time Budgets.
+Legacy code: keep the scale; group many Low findings into one entry instead of listing each.
 
-### Target Check
+## Workflow
 
-Before running the test suite (Check 1) or starting the app (Check 4), inspect the env files and config the process will load (`.env`, `.env.test`, config files, `docker-compose*.yml`, and the current shell environment) for database, queue, cache, mail, and external-API targets, e.g. `DATABASE_URL`, `DB_HOST`, `REDIS_URL`, `AMQP_URL`/`RABBITMQ_URL`, `KAFKA_BROKERS`, `SMTP_HOST`, payment or email provider keys.
+### Step 1: Plan the run
 
-- Proceed automatically only if every target is provably local (see `_shared/tool-rules.md` → Production Targets): `localhost`, `127.0.0.1`, `::1`, `*.localhost`, a container this run started, or a file database under a temp directory. Names containing `dev`, `staging`, or `test` are not proof.
-- The check applies to every test command unless it provably runs only hermetic unit tests (a dedicated unit script or path that loads no `.env` or DB/queue config). `npm test`, `npm run test:ci`, `pytest`, `go test ./...`, and `./mvnw test` count as integration runs.
-- Also check whether app startup or the test run migrates, resets, or seeds a database automatically: app hooks (a `prestart` script, a migrate-on-boot setting) and test hooks (npm `pretest`, which `npm test` runs automatically; Jest/Vitest `globalSetup`/`setupFiles`; pytest `conftest.py` fixtures; Go `TestMain`), e.g. `prisma migrate reset --force`, `prisma db push`, `knex migrate:latest`, `alembic upgrade head`. If any does, ask first even for a local database (see `_shared/tool-rules.md` → Always Ask First).
-- If any target is not provably local, skip that check, record it in the report as "not run: non-local target <name>", and ask whether to run it.
+1. Read the manifests and lockfiles. Pick commands from `references/commands.md`, preferring the project's own scripts. Read each script body you plan to run.
+2. Note what is not configured (no coverage tool, no linter, no health route). Those become "not run" entries or recommendations, not installs.
+3. In `mode=review`, build the file list first (see Review Mode below).
 
-## Detecting the Right Commands
+Done when: you have a list of commands, each marked hermetic or integration.
 
-Use `read` on the relevant manifest, then map standard scripts/goals to concrete commands.
+### Step 2: Target Check
 
-| Stack | Manifest | Common commands to look for |
-|-------|----------|----------------------------|
-| Node.js | `package.json` scripts | `npm test`, `npm run lint`, `npm run typecheck`, `npm run build`, `npm audit` |
-| Python | `pyproject.toml`, `setup.cfg`, `tox.ini`, `Makefile` | `pytest`, `ruff check .`, `mypy .`, `pip-audit --desc`, `bandit -r .` |
-| Go | `go.mod` | `go test ./...`, `go vet ./...`, `golangci-lint run ./...`, `govulncheck ./...` |
-| Java/Maven | `pom.xml` | `./mvnw test`, `./mvnw verify`, `./mvnw spotbugs:check`, `./mvnw dependency:analyze` |
-| Generic | `Makefile` | `make test`, `make lint`, `make audit`, `make build` |
+Before Step 3 (tests), Step 6 (smoke test) or a migration-status command, read what the process will load: `.env`, `.env.test`, config files, `docker-compose*.yml`, test setup files, and the current shell environment. List every database, queue, cache, mail, SMS, payment and external-API target (e.g. `DATABASE_URL`, `DB_HOST`, `REDIS_URL`, `AMQP_URL`, `RABBITMQ_URL`, `KAFKA_BROKERS`, `SMTP_HOST`, provider keys).
 
-Prefer the exact script names found in the manifest. If a manifest is missing, fall back to the standard commands for the detected language. Never invent non-standard scripts.
+- Run automatically only if every target is provably local per `<shared>/tool-rules.md` -> Production Targets. Names containing `dev`, `staging` or `test` are not proof. An unresolved target counts as production.
+- Every test command is an integration run unless it provably runs only hermetic unit tests (a dedicated unit script or path that loads no `.env` and no DB or queue config). `npm test`, `npm run test:ci`, `pytest`, `go test ./...` and `./mvnw test` count as integration runs.
+- Check for automatic migrate, reset or seed: app hooks (`prestart`, migrate-on-boot settings) and test hooks (npm `pretest`, Jest or Vitest `globalSetup` / `setupFiles`, pytest `conftest.py` fixtures, Go `TestMain`), e.g. `prisma migrate reset --force`, `prisma db push`, `knex migrate:latest`, `alembic upgrade head`. If any exists, ask first even for a local database (Always Ask First).
+- If a target is not provably local, skip that check, record "not run: non-local target <name>", and ask whether to run it.
 
-## Running Checks
+Done when: each integration command is marked run, ask, or skip, with the target it resolved.
 
-All checks must produce observable evidence (exit codes, command output, file paths, line numbers). Static observations are secondary and only support dynamic findings.
+### Step 3: Tests and coverage
 
-### 1. Run the Test Suite
+Run the test command (the coverage variant if coverage is configured). Capture the exit code, failure count, failing test names and assertions. Classify each failure as environment, flaky or code (see `references/commands.md` -> Classifying failures) before rating it. Follow Test Integrity: never skip, edit or loosen a test.
 
-Use `bash` to execute the detected test command. Run it only after the Target Check passes, unless the command is provably unit-only; the default commands below run the whole suite and are not.
+Done when: results and coverage (or "coverage: not measured") are recorded.
 
-Examples:
-- Node.js: `npm test` or `npm run test:ci`
-- Python: `pytest`
-- Go: `go test ./...`
-- Java/Maven: `./mvnw test`
+### Step 4: Build, lint and type checks
 
-Capture:
-- Exit code.
-- Number of failures/errors.
-- Names of failing test files and the failing assertions.
+Run the build, linter, formatter check and type-checker. Check LSP diagnostics on the source folders if available; without LSP, the type-checker is the evidence. Rate type errors that can fail at runtime High, lint failures on critical paths Medium, cosmetic warnings Low.
 
-If the test suite fails on a critical path (auth, payments, persistence, invariants), mark it **High** or **Critical**. A completely broken build is **Critical**.
+Done when: each tool has an exit code or a "not configured" note.
 
-### 2. Run Lint / Format / Type Checks
+### Step 5: Dependency audit
 
-Use `bash` to run the relevant quality gates.
+Audit production dependencies separately from dev dependencies (`references/commands.md` -> Dependency Audits). For each vulnerability record package, installed version, fixed version and whether it is production or dev. Recommend upgrades with the fixed version and any breaking changes; installing or upgrading always needs confirmation and belongs to the Next skill.
 
-Examples:
-- Node.js: `npm run lint`, `npm run typecheck`, `tsc --noEmit`
-- Python: `ruff check .`, `black --check .`, `mypy .`
-- Go: `go vet ./...`, `golangci-lint run ./...`
-- Java/Maven: `./mvnw checkstyle:check`, `./mvnw spotbugs:check`
+Done when: production and dev results are recorded separately, or the audit is "not run" with the reason.
 
-Then run `lsp_diagnostics` on the source directory or key files to catch compile/type errors the CLI tools may have missed.
+### Step 6: Smoke test
 
-Capture:
-- Tool output and exit codes.
-- `lsp_diagnostics` errors/warnings with file paths.
+If there is a start command and the Target Check passed, follow `references/smoke-test.md`: find the port and the real health route, start in the background, poll up to about 60s, probe, then stop the whole process tree and confirm the port is free. Optionally run the read-only migration-status command for the project's migration tool.
 
-Severity:
-- Type errors that could cause runtime failures: **High**.
-- Linter/format failures on critical paths: **Medium**.
-- Minor style-only linter warnings: **Low**.
+Done when: the probe result is recorded and no process this run started is still running.
 
-### 3. Run Dependency Audits
+### Step 7: Static checks
 
-Use `bash` to run the standard audit tool for the stack.
+Follow `references/static-checks.md`. Search for candidates, read each hit in context, and report only confirmed findings. Cover injection sinks, secrets in the working tree, missing validation and obvious ownership gaps, layering and architecture, performance (static only) and resilience. Anything that needs a deeper security look goes to "Needs review (backend-security)".
 
-Examples:
-- Node.js: `npm audit --audit-level moderate` or `pnpm audit`
-- Python: `pip-audit --desc` or `safety check`
-- Go: `govulncheck ./...`
-- Java/Maven: `./mvnw dependency:check` or OWASP Dependency-Check
+Done when: every confirmed finding has a file, line and evidence excerpt.
 
-Capture:
-- Vulnerability count and severity.
-- Package names and affected versions.
-- Whether a fix version is available.
+### Step 8: Compare with known issues and write the output
 
-Severity:
-- Known exploitable vulnerability on a production dependency: **Critical**.
-- High/CVSS-high vulnerability: **High**.
-- Moderate or low vulnerabilities: **Medium** / **Low**.
+1. For each Open or In Progress entry in `issues.md`, check whether this run shows it fixed (Resolved), still present (Open), or back after being Resolved (Regressed, High at least).
+2. Write the output with `references/output-format.md`. Each finding has: file and line, the command or search that produced it, a 2 to 10 line excerpt (secrets masked), severity and category, the principle it violates, a recommendation (with a code example when useful), and the Next skill.
+3. Grade categories with the rubric there. Unrun checks make a category "Not assessed", never a pass.
 
-### 4. Smoke Test the Running Application
+Done when: the output covers every check from Step 1, including the ones not run.
 
-If the project exposes a start command and a health/readiness endpoint, and the Target Check passes, start the app with `bash`, wait for it to listen, then probe the endpoint. If the Target Check does not pass, do not start the app; report the smoke test as "not run" with the non-local target and ask.
+### Step 9: Persist findings
 
-Example flow:
-1. Start server in the background: `npm start`, `python -m <module>`, `go run ./cmd/server`, etc.
-2. Capture the process ID.
-3. Probe the endpoint: `curl -fsS http://localhost:<port>/health` or `curl -fsS http://localhost:<port>/ready`.
-4. Stop the server (kill the recorded PID).
+Start a checkpoint before the first write: `node <shared>/scripts/checkpoint.js start --skill backend-doctor --feature <slug>` (slug `health-check`, or `review-<branch>` in review mode). On exit code 3, resume the open checkpoint. Then:
 
-If there is no health endpoint, skip this step and note it under **Recommendations**.
+1. Append each new Critical, High and Medium finding to `.opencode/everything-backend-memory/issues.md` in the `memory-schema.md` format. Skip findings that already have an entry for the same location and problem; update that entry's Status instead (Resolved with a short note, or Open again with "Regressed on <date>"). Never copy secret values.
+2. Update `## Last Updated`.
+3. Record the file (`checkpoint.js record ... --memory issues.md`), snapshot, and close with `--status completed`.
+4. If the user asked for a saved copy, write it to `docs/health/doctor-<YYYYMMDD>.md` and record it with `--created`.
 
-Severity:
-- App fails to start or health check returns non-2xx: **High** or **Critical** depending on environment.
-- Missing health endpoint on a service: **Medium**.
+If Node is unavailable, follow `<shared>/tool-rules.md` -> Concurrent & Partial Work by hand. In `mode=interactive`, show the issues.md diff and wait for approval first.
 
-### 5. Scan for Static Anti-Patterns
+Done when: issues.md reflects this run and the checkpoint is closed.
 
-Use `glob`, `read`, and `grep` to gather targeted evidence after dynamic checks.
+## Review Mode
 
-Patterns to hunt:
-- **Raw SQL / injection risk**: `grep` for string templates/interpolation inside SQL-like strings (`SELECT`, `INSERT`, `UPDATE`, `DELETE` combined with `${`, `%s`, `+`). Use `read` to confirm.
-- **Secrets in code**: `grep` for `api[_-]?key`, `password`, `secret`, `token` followed by assignments or literals. Verify `.env` is in `.gitignore`.
-- **Fat controllers / handlers**: `lsp_symbols` on controller files; flag files with many route methods or business branching.
-- **Missing validation**: `grep` route handlers that do not reference validation schemas (Zod, Joi, Pydantic, etc.).
-- **N+1 / broad queries**: `grep` for loops containing DB calls or `SELECT *` on hot paths.
-- **Generic error responses**: `grep` for `status(500)`, `raise Exception`, or untyped error returns in API handlers.
-- **Missing ownership checks**: `grep` protected route patterns and verify ownership/RBAC logic with `read`.
-
-Severity:
-- Confirmed injection or secret in committed code: **Critical**.
-- Missing auth/ownership checks on protected routes: **High**.
-- Missing validation on critical endpoints: **High**.
-- N+1 or broad queries: **Medium**.
-- Minor duplication or style issues: **Low**.
-
-## Static Review (Secondary)
+`mode=review` checks only what a branch changes.
 
-Use the following checklist only to classify findings gathered above. Do not present it as a primary deliverable.
-
-See `_shared/principles.md` for the canonical backend principles that underpin this checklist.
-
-## Evidence-Based Report
-
-Every reported finding must be backed by evidence:
-
-1. **File path and line number**: `src/routes/user.ts:42`.
-2. **Tool or command that produced the evidence**: `npm test`, `npm audit`, `lsp_diagnostics`, `grep -n "SELECT \*" src/orders.ts`.
-3. **Relevant output excerpt**: 2–10 lines of output showing the failure, vulnerability, or matched code.
-4. **Severity and category** from the rules below.
-5. **Why it violates a backend principle**.
-6. **Recommendation or minimal fix** with a code example when useful.
-7. **Next skill**: the skill that owns the fix (doctor does not apply it in `mode=auto`).
-
-If a required tool is missing or fails to run, follow `_shared/tool-rules.md`: report the exact error as a **Medium** finding under "Tooling", capture the exit code, and try an alternative command from the Default Investigation Toolkit when available. Time limits follow `_shared/tool-rules.md` → Command Time Budgets; a check that exceeds its budget is reported as "did not complete" with the elapsed time, never as passing.
-
-## Severity Rules
-
-- **Critical**: data loss risk, authentication bypass, injection (SQL, command, etc.), broken transaction/invariant handling, secrets exposure in code, known exploitable dependency vulnerability.
-- **High**: strong maintainability or integrity risk, e.g. god service, missing ownership/authorization checks, duplicated business rules across endpoints, widespread type errors, failing critical-path tests.
-- **Medium**: weak layering, missing tests on critical paths, weak index strategy, inconsistent error mapping, missing health endpoint, linter/type warnings that could hide real bugs.
-- **Low**: naming, documentation, minor duplication, non-critical observability gaps, cosmetic linter warnings.
-
-## Decision Trees
-
-These are recommendations for the report. Doctor applies none of them in `mode=auto`; each goes to its **Next skill**, or is applied by doctor only after the user confirms that specific fix.
-
-### If security issues found:
-- Prioritize Critical and High severity.
-- Provide specific fix instructions.
-- Recommend immediate patches.
-- Add or strengthen security tests.
-
-### If performance issues found:
-- Prioritize database query issues (N+1, missing indexes).
-- Add pagination where missing.
-- Consider caching strategy.
-- Consider async processing for heavy workloads.
-
-### If code quality issues found:
-- Prioritize maintainability risks (god services, duplicated business rules).
-- Recommend explicit boundary fixes (controller → service → repository).
-- Add missing tests and documentation.
-
-### If dependency issues found:
-- Recommend upgrades for vulnerable packages, naming the fixed version and any breaking changes.
-- Recommend removing unused dependencies.
-- Recommend pinning versions for stability.
-- Recommend automated dependency scanning (Next skill: `backend-deploy` for CI).
-- Installing, upgrading, or removing a dependency always needs confirmation (see `_shared/tool-rules.md` → Always Ask First).
-
-## Health Report Template
-
-````markdown
-# Backend Health Report
-
-**Date**: [ISO timestamp]
-**Project**: [Name]
-**Overall Score**: [A/B/C/D/F]
-
-## Summary
-- **Critical Issues**: [N]
-- **High Issues**: [N]
-- **Medium Issues**: [N]
-- **Low Issues / Recommendations**: [N]
-
-## Commands Executed
-| Command | Exit Code | Notes |
-|---------|-----------|-------|
-| `npm test` | 1 | 3 failures in `auth.test.ts` |
-| `npm audit` | 0 | 1 moderate vulnerability in `lodash@4.17.20` |
-| `lsp_diagnostics` on `src/` | - | 12 errors, 4 warnings |
-
-## Critical Issues (Fix Immediately)
-
-### 1. SQL Injection Vulnerability
-- **File**: `src/repositories/user.ts:45`
-- **Severity**: Critical
-- **Category**: Security
-- **Evidence**: `grep -n "SELECT.*\${" src/repositories/user.ts` returned string-interpolated SQL.
-- **Description**: Raw SQL query with string concatenation
-- **Impact**: Attacker can read/modify any data, bypass authentication
-- **Recommendation**: Use parameterized queries
-- **Next skill**: `backend-implement`
-- **Example Fix**:
-  ```typescript
-  // Before (VULNERABLE)
-  const query = `SELECT * FROM users WHERE id = '${userId}'`;
-
-  // After (SECURE)
-  const query = 'SELECT * FROM users WHERE id = $1';
-  const result = await db.query(query, [userId]);
-  ```
-
-## High Issues (Fix Soon)
-
-### 1. Failing Authentication Tests
-- **File**: `tests/auth.test.ts:78`
-- **Severity**: High
-- **Category**: Quality / Security
-- **Evidence**: `npm test` output: `expected 401, got 200`.
-- **Description**: Login endpoint returns 200 for invalid credentials.
-- **Impact**: Auth bypass risk.
-- **Recommendation**: Verify password hash comparison and reject invalid credentials.
-- **Next skill**: `backend-auth`
-
-## Medium Issues (Plan to Fix)
-
-### 1. Missing Health Endpoint
-- **File**: `src/app.ts`
-- **Severity**: Medium
-- **Category**: Observability
-- **Evidence**: Smoke test `curl http://localhost:3000/health` returned `404 Not Found`.
-- **Recommendation**: Add `/health` and `/ready` endpoints.
-- **Next skill**: `backend-implement`
-
-## Low / Recommendations (Consider)
-
-### 1. Add Input Validation Schema
-- **File**: `src/controllers/user.ts:20`
-- **Severity**: Low
-- **Category**: Quality
-- **Evidence**: Route handler does not import any validation library.
-- **Recommendation**: Add Zod/Pydantic validation for request bodies.
-- **Next skill**: `backend-implement`
-
-## Scores by Category
-| Category | Score | Notes |
-|----------|-------|-------|
-| Code Quality | B | Good structure, some long functions |
-| Security | C | SQL injection found, weak auth |
-| Performance | B | Missing indexes, no caching |
-| Dependencies | A | All up to date |
-| Testing | C | Low test coverage |
-
-## Architecture Findings
-- **Layering**: [Good / Mixed / Poor]
-- **SOLID / SRP**: [Good / Mixed / Poor]
-- **Dependency Direction**: [Good / Mixed / Poor]
-- **Transaction Ownership**: [Good / Mixed / Poor]
-- **Normalization / Data Integrity**: [Good / Mixed / Poor]
-````
+1. Base: `base=<branch>` if given, else the remote default branch (`git symbolic-ref --short refs/remotes/origin/HEAD`), else `main` or `master`. Do not fetch; if the local base may be stale, say so.
+2. Files: `git diff --name-only --diff-filter=ACMR <base>...HEAD`, plus uncommitted changes (`git diff --name-only HEAD`) and untracked files (`git ls-files --others --exclude-standard`). Skip deleted, generated and vendored files.
+3. Checks:
+   - Lint and type-check the changed files where the tool accepts paths; otherwise run it fully and keep only results in changed files.
+   - Tests: run the tests related to the changed files if the runner supports it (e.g. `vitest related`, `jest --findRelatedTests`), else the full suite. The Target Check still applies.
+   - Dependency audit only if a manifest or lockfile changed.
+   - Static checks on the changed files, focused on changed lines.
+   - Changed migration files: flag them for backend-migrate review (expand/contract order, locks, NOT NULL and index safety).
+   - Changes to auth, sessions, crypto, access control or new public endpoints: recommend a backend-security review.
+4. Report findings in changed lines first. List pre-existing problems you noticed in the same files under "Outside the diff" without grading them. Skip the smoke test unless the user asks.
+
+Done when: each changed file is either checked or listed as skipped with a reason.
 
 ## Edge Cases
 
-- **No code to check**: Run `backend-scan` first.
-- **Large codebase**: Run global tests/audits, then sample critical paths.
-- **Legacy code**: Be lenient with warnings, focus on critical security issues.
-- **Multiple languages**: Check each separately against language-specific best practices.
-- **No memory files**: Suggest running `backend-scan` to get context.
-- **No health endpoint**: Skip smoke test and note under recommendations.
-- **Missing tooling**: Report the missing tool as a Medium finding with the exact error.
+- **No memory and no code**: stop and ask for the project path.
+- **Large codebase**: run the global commands, then sample static checks on critical paths (auth, payments, persistence, public endpoints) and say what was sampled.
+- **Multiple languages or services**: check each separately with its own commands; one output with a section per service.
+- **Missing tool**: report it as a Medium "Tooling" finding with the exact error and the setup command; try an alternative from `references/commands.md` that needs no install.
+- **Long-running check**: follow Command Time Budgets; report "did not complete" with the elapsed time and partial output.
+- **Fix requested**: hand the finding to its Next skill. Re-run doctor afterwards to confirm.

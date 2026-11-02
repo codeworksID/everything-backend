@@ -5,6 +5,29 @@
 
 ---
 
+## 0.4.0 (2026-11-02)
+
+IDs refer to docs/audit/2026-10-31-findings-detail.md.
+
+### Added
+
+- **Claude support**: Claude Code plugin (`.claude-plugin/plugin.json`, `marketplace.json`) with a `PreToolUse` guard hook (`hooks/`); installer targets `~/.claude/skills` and `<project>/.claude/skills` (`--host claude`); `npm run build:claude` builds self-contained Claude.ai zips with `_shared/` bundled per skill (F218).
+- **Host-neutral skills**: actions instead of OpenCode tool names; `_shared/host-tools.md` maps them per host, documents enforcement per host and install locations (F050).
+- **Enforcement scripts**: `_shared/scripts/checkpoint.js` (start/backup/record/snapshot/status/rollback/close; patch-based undo) and `_shared/scripts/guard.js` (classifies destructive git, migration, SQL, deploy/infra and delete commands as Always Ask First), with `scripts/test-scripts.js` (F088).
+- **backend-debug** (bug triage and fixing, F040) and **backend-security** (threat model, OWASP API Top 10, secrets, SAST, supply chain, F054).
+- **Stack references**: `_shared/stacks/postgres.md`, `node-typescript.md`, `python-fastapi.md`.
+- **Memory schemas** for `test-strategy.md` and `deployment.md` (F016); secrets/PII and trust-boundary rules (F015, F096).
+
+### Changed
+
+- **Progressive disclosure**: every SKILL.md is a lean workflow (all under 210 lines; visualize went from 722 to 171), with templates and catalogs in `<skill>/references/` (F120, F092).
+- **backend-deploy**: numbered workflow, outputs and exit criteria, Kubernetes manifests, Dockerfiles per stack, release strategy, rollback, post-deploy verification, gated expand -> deploy -> contract migration step (F058, F060, F063, F028, F057).
+- **backend-ops**: resilience patterns and backup/restore/DR (F066, F068).
+- **backend-architect** writes `docs/architecture/overview.md` and ADRs in `docs/adr/` (F020).
+- **backend-orchestrator**: when-to-use description, routing rules, debug/security routes, Greenfield/Schema Change/Bug Fix workflows, loop caps (F004-F009, F076).
+- **context-loading**: `_shared/` resolved inside the skill folder first; greenfield projects are not blocked; one missing-memory rule (F019, F083, F274).
+- **check-package.js** also validates Claude frontmatter rules, references/ links, code fences and the plugin manifest.
+
 ## Unreleased (2026-06-16)
 
 ### Added

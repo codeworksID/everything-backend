@@ -1,0 +1,29 @@
+{
+  "description": "everything-backend guard: asks before destructive git, migration, deploy and infra commands, and before edits to secret files.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/guard-hook.js"],
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/guard-hook.js"],
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

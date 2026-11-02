@@ -1,429 +1,159 @@
 ---
 name: backend-implement
-description: "Turn backend designs into code or evolve existing code. Supports Node.js, Python, Go, and Java. Reads from memory files for full context. Activate when the user says 'implement', 'generate code', 'build this', or wants to add, split, or refactor backend code."
+description: Writes backend feature code from a design or adds new features to an existing codebase, covering endpoints, services, repositories, models, middleware and wiring for Node.js/TypeScript, Python, Go and Java backends. Keeps controllers thin, runs a post-generation layering and safety checklist, updates API memory, and hands schema changes to backend-migrate. Use when the user says "implement this", "build this feature", "generate the code", "add an endpoint", "add a field to the model", "add middleware", or asks how to build a designed feature. Not for bug fixes or failing behavior (use backend-debug), behavior-preserving restructuring such as splitting or renaming code (use backend-refactor), or writing and applying migrations (use backend-migrate).
 ---
 
 # Backend Implement
 
-## When to Activate
+Turns a design into working code, or adds a feature to code that already exists. It writes source files, tests and memory entries. It never writes or applies migrations.
 
-- User wants to generate code from a design
-- User says "implement", "generate code", "build this"
-- After architecture and API design are complete
-- User asks "how do I build this?" or "how do I add X?"
-- Adding a new endpoint, field, service, middleware, or repository query to existing code
-- Splitting a fat controller, service, or repository
+## When to Use
 
-## Prerequisites
+- The user wants code generated from an architecture, API or schema design.
+- The user says "implement", "build this", "generate the code", "how do I add X?".
+- Adding a new endpoint, field, service method, middleware, or repository query to existing code.
+- An orchestrator workflow reaches its implementation step.
 
-See `_shared/context-loading.md` for standard prerequisites (project root check, manifest detection, memory file presence, fallback rules, and context priority list).
+## Route Elsewhere
 
-Add these implementation-specific prerequisites:
+| Request | Skill |
+|---|---|
+| Bug report, failing test, 500 error, wrong output, "fix this" | `backend-debug` |
+| Split a fat controller or service, extract, rename, move, clean up with identical behavior | `backend-refactor` |
+| Write or apply a migration, change a column on a live table | `backend-migrate` |
+| Choose the auth mechanism, token lifetimes, role model | `backend-auth` |
+| Design endpoints or the API contract | `backend-api-design` |
+| Security review of the code | `backend-security` |
 
-- REQUIRED: `tech-stack.md` exists or the tech stack can be inferred from project files.
-  - If missing: run `backend-scan` with `mode=auto` to populate memory
-- RECOMMENDED: `api-patterns.md` and `db-schema.md` are available for the feature being implemented.
-  - If missing: run `backend-api-design` and/or `backend-db-design` to produce the missing design, or proceed with the existing design context the user provides
+If a request mixes a feature with a refactor, do the refactor first through `backend-refactor`, then implement the feature on the green result. Never mix the two in one run.
 
-## Required Context
+## Before You Start
 
-See `_shared/context-loading.md` for the standard context priority list and loading rules.
+1. Resolve the shared docs folder (`<shared>`): first `_shared/` inside this skill's folder (bundled installs, e.g. Claude.ai), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
+2. Read `<shared>/tool-rules.md` (mode=auto contract, Production Targets, Test Integrity, checkpoints), `<shared>/principles.md` (code, API, system and security principles that every change must follow), and `<shared>/host-tools.md` if the actions below don't match your host's tool names.
+3. Load project memory per `<shared>/context-loading.md`. Always load `tech-stack.md`, `project-overview.md`, `api-patterns.md` and `db-schema.md`. Load `decisions.md` only when the change raises an architecture, auth or cross-cutting question.
+   - `tech-stack.md` missing and the stack cannot be inferred from manifests: run `backend-scan` first.
+   - No design for the feature (no endpoint in `api-patterns.md`, no tables in `db-schema.md`, nothing from the user): run `backend-api-design` and/or `backend-db-design` first, or proceed only on a design the user gives in the request.
+4. If the detected stack matches a file in `<shared>/stacks/`, read it.
 
-Implementation-specific overrides:
+## Workflow
 
-- Always load: `tech-stack.md`, `api-patterns.md`, `db-schema.md`, `project-overview.md`
-- Lazy-load: `decisions.md` only when the implementation raises architecture or cross-cutting design questions
+### Step 1: Scope the change
 
-## Core Process
+1. Name a feature slug in kebab-case from the request (for example `user-registration`). Every checkpoint and memory entry for this run uses it.
+2. Pick the path:
+   - **Greenfield** (new service or module from a design): read [references/greenfield.md](references/greenfield.md).
+   - **Modify existing code** (endpoint, field, middleware, query): read [references/modify-workflows.md](references/modify-workflows.md) and pick the matching workflow.
+3. Find the files involved: find files by layer, search file contents for the routes, services and models the feature touches, and read them. Match the project's existing style, error mapping and test framework.
+4. List what the feature needs that is out of scope here (schema change, auth decision, refactor) and route it per the table above.
 
-### Step 1: Context Loading
+Output: feature slug, path, list of files to create or edit, list of hand-offs.
 
-Read all memory files for full context:
+### Step 2: Start a checkpoint
 
-- `project-overview.md` - Project type, structure
-- `tech-stack.md` - Languages, frameworks, databases
-- `api-patterns.md` - API design, endpoints
-- `db-schema.md` - Database schema
-- `decisions.md` - Architecture decisions
+Start a checkpoint before the first edit:
 
-If memory is empty or stale, suggest running:
-- `backend-scan` first
-- `backend-architect` for architecture
-- `backend-api-design` for endpoints
-- `backend-db-design` for schema
-
-### Step 2: Implementation Rules (MANDATORY)
-
-Apply the code/architecture, API, system, and security principles in `_shared/principles.md` before writing or editing code.
-
-### Post-Generation Checklist
-
-After generating or modifying code, run each check below against this run's files.
-
-**Scope**
-- Scan only the files this run created or changed: the checkpoint's `created_files[]` and `modified_files[]` (see `_shared/tool-rules.md` → Concurrent & Partial Work). Without a checkpoint, use the paths whose `git status --porcelain` entry is new or whose content differs from the run-start snapshot, plus any `pre_existing_changes[]` file this run edited.
-- Map layers from `project-overview.md`, or from the layouts under Greenfield Generation (Node `src/`, FastAPI `app/`, Go `internal/`). Never assume `src/`.
-- Run each pattern with the host's `grep` tool (regex, case-insensitive where noted) restricted to the scoped files via `glob` or an explicit file list. Use shell `grep -rnE` or PowerShell `Select-String -Pattern` only when the host has no search tool.
-
-**Reporting**
-- Each check reports: files scanned (count), findings as `file:line`, and a verdict.
-- No matches is a valid result, not a tool error.
-- Report a check as "not applicable" when this run changed no files in its layer, and as "not run" when its path does not exist or the tool failed. Never report either as pass.
-- A hit is a candidate. Read the line before changing code.
-- The checklist is clean when every applicable check ran and every finding is either fixed or listed in the summary with `file:line` and a one-line justification.
-
-#### 1. Controllers contain no business logic
-- Scope: changed transport files (`controllers/`, `handlers/`, `routes/`, `api/`).
-- Pattern: `\b(if|else|switch|case|for|while|match|select)\b`
-- Pass: every hit is input validation, auth/error-to-HTTP mapping, or response shaping.
-- If failed: move the business branch into a service method; the handler should only parse input, call `service.<action>(dto)`, and map the result/error.
-
-#### 2. Services own transaction boundaries
-- Scope: changed transport files.
-- Pattern (case-insensitive): `\b(begin|commit|rollback)\b|transaction|@Transactional|\bBeginTx?\(|\batomic\(`
-- Pass: zero hits in transport files.
-- If failed: open the transaction in the service method; controllers must never start or commit transactions.
-
-#### 3. No SQL built from strings
-- Scope: all changed source files.
-- Pattern (case-insensitive): `` \b(select|insert|update|delete)\b.*(\$\{|["'`]\s*\+|\+\s*["'`]|["']\s+%\s*[(\w]|\.format\(|Sprintf\()|(\bf["']|Sprintf\(|\.format\().*\b(select|insert|update|delete)\b ``
-- Pass: zero hits, or each hit is justified as safe: tagged templates that parameterize `${}` (Prisma `$queryRaw`, `sql` tags from postgres.js/slonik), or interpolated identifiers taken from a fixed allowlist. `%s` and `?` placeholders passed with a separate params argument, as in `cur.execute(sql, params)`, are safe and do not match. A `%` inside a `LIKE` literal (e.g. `LIKE ' %abc'`) is a known false positive. The `%` operator pattern needs whitespace after the closing quote, so `"..."%x` written without spaces is caught only by the file read below.
-- Also read every changed repository file. Queries built across several lines can escape a line-based pattern.
-- If failed: replace string building with parameterized queries (`$1`, `?`, `%s` with a params tuple, or ORM equivalents).
-
-#### 4. All endpoints validate input
-- Scope: changed route/handler files.
-- Pattern for route declarations: `\b(router|app|fastify|server)\.(get|post|put|patch|delete)\(|@(Get|Post|Put|Patch|Delete)(Mapping)?\b|@\w+\.(get|post|put|patch|delete)\(|\.(GET|POST|PUT|PATCH|DELETE)\(`
-- Pass: each route that reads a body, query, or path params parses it through a schema before calling the service: Zod/Joi/class-validator (`ValidationPipe`), a Pydantic model parameter (FastAPI), `ShouldBind*` plus `binding:` tags (Gin), or `@Valid` (Spring). An import elsewhere in the file is not enough; check the handler itself.
-- If failed: add a schema at the route boundary and parse input before calling the service.
-
-#### 5. Domain logic does not depend on framework details
-- Scope: changed domain and service files.
-- Patterns:
-  - TS/JS: `from ["'](express|fastify|koa)["']|require\(["'](express|fastify|koa)["']\)|\bHttpException\b|@Req\(|@Res\(`
-  - Python: `^\s*(from|import)\s+(fastapi|starlette|flask|django\.http)\b`
-  - Go: `"github\.com/(gin-gonic/gin|labstack/echo|gofiber/fiber)`
-  - Java: `org\.springframework\.web\b|@(RestController|Controller|RequestMapping)\b`
-- Pass: zero hits. NestJS `@Injectable()` from `@nestjs/common` is idiomatic in services and is not a violation.
-- If failed: move the framework-typed code into the transport layer; keep domain and service code framework-agnostic.
-
-#### 6. Errors are typed and mapped centrally
-- Scope: changed handler and service files.
-- Pattern: `res\.status\(5\d\d\)|\bthrow new Error\(|\braise Exception\(|StatusInternalServerError|\bpanic\(`. In service files, also flag `\braise HTTPException\(|\bthrow new HttpException\(`.
-- Confirm that a central mapper exists anywhere in the project (the one project-wide lookup in this checklist): `\(\s*err\w*\s*(:\s*\w+)?\s*,\s*req\w*.*,\s*res\w*.*,\s*next|exception_handler|@ControllerAdvice|@RestControllerAdvice|@ExceptionHandler|@Catch\(|ExceptionFilter|c\.Errors`. The first alternative finds 4-argument Express error handlers, inline or named (`app.use(errorHandler)`).
-- Pass: no hits outside the central error middleware/filter, and at least one central error-mapping module exists. It may register several handlers (one FastAPI `exception_handler` per error type, several `@Catch()` filters or `@ControllerAdvice` classes). Flag only competing ad-hoc mappers inside handlers or services.
-- If failed: define typed error classes (`NotFoundError`, `ConflictError`, etc.) and a single error-mapping middleware/filter.
-
-#### 7. No suppressed type or lint errors
-- Scope: all changed source files.
-- Patterns: TS `:\s*any\b|\bas any\b|<any>|@ts-ignore|@ts-expect-error|@ts-nocheck|eslint-disable`; Python `#\s*type:\s*ignore`; Go `//\s*nolint`
-- Pass: zero hits, or each hit has an adjacent `allow: <reason>` comment.
-- If failed: replace `any` with a precise type, or remove the suppression; never ship a silent bypass.
-
-#### 8. Diagnostics clean
-- Check: run `lsp_diagnostics` on each changed file. If LSP is unavailable, run the project's type-check (`tsc --noEmit`, `mypy`/`pyright`, `go vet ./...`, or the build) within the limits in `_shared/tool-rules.md` → Command Time Budgets.
-- Pass: zero errors in changed files; warnings allowed only if unrelated to the change. A check that timed out is reported as "did not complete", never as pass.
-- If failed: fix every error introduced by the new code and re-run until clean.
-
-#### 9. Test coverage on critical paths
-- Check: list the business-critical functions this run added or changed (`createUser`, `placeOrder`, `charge`, `payout`, or project-specific equivalents), then use `glob`/`grep` to find test files that reference each one.
-- Pass: every listed function has at least one test that references it and exercises an error branch.
-- If failed: add at least one unit test covering the happy path and one covering an error branch; then run `backend-test`.
-
-### Step 3: Tool Usage Rules (MANDATORY)
-
-Use OpenCode tools during implementation.
-
-See `_shared/tool-rules.md` for the canonical tool-usage rules.
-
-## Greenfield Generation
-
-Use this workflow when building from a design.
-
-### 1. Project Structure
-
-Choose the structure that matches the stack.
-
-#### Node.js/Express Structure
 ```
-src/
-├── controllers/     # Request handlers
-├── services/        # Business logic
-├── repositories/    # Data access
-├── models/          # Database models
-├── middleware/      # Express middleware
-├── routes/          # API routes
-├── utils/           # Utility functions
-├── config/          # Configuration
-└── types/           # TypeScript types
-tests/
-├── unit/
-├── integration/
-└── e2e/
+node <shared>/scripts/checkpoint.js start --skill backend-implement --feature <slug> --steps "plan,implement,tests,checklist,memory"
 ```
 
-#### Python/FastAPI Structure
-```
-app/
-├── api/             # API routes
-│   └── v1/          # Version 1
-├── models/          # SQLAlchemy models
-├── schemas/         # Pydantic schemas
-├── services/        # Business logic
-├── repositories/    # Data access
-├── core/            # Configuration
-└── utils/           # Utilities
-tests/
-├── unit/
-├── integration/
-└── e2e/
-```
+- Exit code 3 means an open checkpoint exists for this slug. Offer to resume (continue from its first pending step) or restart (`--restart`). In `mode=auto`, resume.
+- On resume, check diagnostics on every file in the checkpoint's `created_files` and `modified_files` before continuing. Code that was clean may have drifted while the checkpoint was idle.
+- If the tree was dirty at start and you must edit one of those files, back it up first: `checkpoint.js backup --skill backend-implement --feature <slug> <file>`.
+- Record each file you create or edit (`checkpoint.js record --skill backend-implement --feature <slug> --created a,b --modified c,d`), mark each step done with `--done <step>`, and run `checkpoint.js snapshot` after each step.
+- If Node is unavailable, follow `<shared>/tool-rules.md` -> Concurrent & Partial Work by hand.
 
-#### Go/Gin Structure
-```
-internal/
-├── handlers/        # HTTP handlers
-├── services/        # Business logic
-├── repositories/    # Data access
-├── models/          # Database models
-├── middleware/      # Gin middleware
-└── config/          # Configuration
-pkg/                 # Public packages
-cmd/                 # Entry points
-tests/
-```
+### Step 3: Implement
 
-### 2. What to Generate
+1. Generate or edit code layer by layer: repository, then service, then handler, then wiring. Use the shapes in [references/patterns.md](references/patterns.md).
+2. Apply `<shared>/principles.md`: thin transport, services own workflow and transactions, typed errors mapped centrally, validation at the boundary, no secrets in responses or logs.
+3. Models and ORM entities may change here. The schema change itself goes to `backend-migrate` with the full column, index and constraint spec. Never turn on ORM auto-sync against anything but a disposable local database this run started.
+4. Auth code implements the decision `backend-auth` recorded. If none exists, stop that part and route to `backend-auth`.
+5. New dependencies pass the license gate below, and installing them always asks first.
+6. Add tests with the code: unit tests for services, endpoint or contract tests for routes, integration tests for repositories against a provably local database.
 
-By layer:
+Output: the changed files, recorded in the checkpoint.
 
-- **Controllers/handlers**: request parsing, schema validation, response formatting, error mapping
-- **Services/use cases**: business workflow, invariants, authorization, transaction boundaries for multi-write flows
-- **Repositories**: CRUD and intent-oriented queries, transaction participation, interfaces/ports where idiomatic
-- **Models**: ORM model/entity definitions, relationships, and constraints matching `db-schema.md`; seed and fixture files. Do not enable or rely on ORM auto-sync (TypeORM `synchronize: true`, Sequelize `sync()`, GORM `AutoMigrate`, SQLAlchemy `metadata.create_all`, `prisma db push`) except against a disposable local DB this run started; schema reaches real databases only through `backend-migrate`
-- **Schema changes**: never written here. Hand them to `backend-migrate`, which is the only skill that writes and applies migration files
-- **Configuration**: env templates, DB connection, logging, middleware wiring, central error mapping
-- **Dependencies**: framework, ORM/driver, validation, testing, linting, and DI/container libraries only when they meaningfully simplify the stack
+### Step 4: Run the post-generation checklist
 
-### 3. Decision Trees
+Read [references/post-generation-checklist.md](references/post-generation-checklist.md) and run all nine checks against this run's files only: layering, transactions, SQL building, input validation, framework leaks, error mapping, suppressions, diagnostics, test coverage.
 
-#### REST API
-- Generate routes, validation, response formatting, error handling middleware, OpenAPI spec
+- Fix each finding, or list it with `file:line` and a one-line justification.
+- Run the tests you added and the existing suite, but only when every target is provably local (see `<shared>/tool-rules.md` -> Production Targets). Follow Test Integrity: never skip, delete or loosen a failing test to get green. If a failure is a bug outside this feature, hand it to `backend-debug`.
 
-#### GraphQL
-- Generate schema definitions, resolvers, data loaders, subscriptions, federation config if needed
+Done when the checklist verdict is **clean**, or **incomplete** with each unrun check and the command the user should run.
 
-#### Database operations
-- Generate ORM models, seed scripts, query builders, connection pooling, constraints matching `db-schema.md`
-- Hand the schema change (tables, columns, indexes, constraints) to `backend-migrate`; do not write or apply migration files here
+### Step 5: Hand off
 
-#### Authentication
-- Generate auth middleware, JWT handling, password hashing, RBAC, session management
+- **Schema changes**: hand to `backend-migrate` with the spec (table, column type, nullability, default, index, foreign key, and whether existing rows need a backfill). Keep the code compatible with the old and new schema until `backend-migrate` finishes its contract step.
+- **Bugs found on the way**: log them in `issues.md` and hand to `backend-debug`. Do not fix unrelated bugs in this run.
+- **Restructuring needed first**: hand to `backend-refactor`.
 
-#### WebSocket
-- Generate server setup, connection management, message handlers, room/channel logic, auth
+### Step 6: Update memory
 
-### 4. User Confirmation
+Use the timestamped block format in `<shared>/memory-schema.md` -> General Update Format. Append; never overwrite.
 
-Present an implementation summary:
+- `api-patterns.md` -> Endpoints: each endpoint added or changed (method, path, auth requirement, request and response shape, source file).
+- `project-overview.md` -> Structure or Module Boundaries: only when this run added a new module or layer.
+- `issues.md`: open items from the checklist that were justified rather than fixed, and bugs handed to `backend-debug`.
+- `db-schema.md` is updated by `backend-migrate` when it writes the migration, not here.
 
-- Generated file tree
-- Key files by layer
-- Dependencies added
-- Schema changes handed to `backend-migrate` (if any). Applying them always asks first; see `_shared/tool-rules.md` → Always Ask First
-- Next steps: review, run `backend-migrate` for pending schema changes, run, test, verify layer boundaries
+Record each memory file in the checkpoint (`checkpoint.js record ... --memory <file>`).
 
-Ask:
-- "Does this implementation look correct?"
-- "Any changes needed?"
-- "Should I generate or expand tests by layer?"
-- "Should I save progress to memory?"
+### Step 7: Report and close
 
-## Modifying Existing Code
+Report:
 
-Most backend work is evolution, not greenfield. Use these workflows.
+- Feature slug and path (greenfield or modify)
+- Files created and modified, by layer
+- Dependencies added with their licenses, or the install command waiting for approval
+- Checklist verdict and any justified findings with `file:line`
+- Tests added and the test run result (or why it did not run)
+- Hand-offs: schema spec for `backend-migrate`, bugs for `backend-debug`, refactors for `backend-refactor`
+- Memory files updated
 
-### Workflow: Add a New Endpoint to an Existing Controller
+Then close the checkpoint: `node <shared>/scripts/checkpoint.js close --skill backend-implement --feature <slug> --status completed`.
 
-1. Read the existing controller, service, repository, and route files
-2. Reuse the existing request/response schema style and error mapping
-3. Add the route entry before implementing the handler
-4. Add the handler as thin transport: parse input, call service, map output/error
-5. Add the service method for the business workflow; place transactions if the flow writes to multiple stores
-6. Add or extend repository methods as intent-oriented queries
-7. Add unit tests for the service and endpoint/contract tests for the route
-8. Run `lsp_diagnostics` and existing tests before finishing
+**Done when** the code for the feature is written, the checklist is clean (or incomplete with reasons), the tests this run added pass on local targets or are reported as not run, every hand-off is listed, memory is updated, and the checkpoint is closed.
 
-### Workflow: Add a New Column/Field to an Existing Model
+## Pause Points
 
-1. Check `db-schema.md` and existing model/entity definitions
-2. Add the field to the model, schema/serializer, and any DTO used across layers
-3. Hand the schema change to `backend-migrate` with the column spec (type, nullability, default, index, foreign key) from `db-schema.md`. Do not write or apply the migration here; `backend-migrate` owns zero-downtime checks, and applying always follows `_shared/tool-rules.md` → Always Ask First
-4. If `backend-migrate` plans expand/contract or a backfill, keep the code working against both the old and new schema until the contract step (e.g. treat the new field as nullable until the backfill completes)
-5. Update repository queries that select, filter, or order by the new field
-6. Update service invariants that depend on the field
-7. Update request/response schemas and validation rules
-8. Add integration tests for repository behavior against the migrated schema; migration correctness is verified by `backend-migrate`
-9. Update seed data and fixture files if they break; running seeds against a database follows Always Ask First
+`<shared>/tool-rules.md` -> `mode=auto` Contract is the single source of truth. For this skill, the actions that always ask first are:
 
-### Workflow: Split a Fat Controller or Service
+- Installing, upgrading or removing a dependency.
+- Running tests, seeds or the app when any database, queue or external service is not provably local.
+- Editing `.env*`, credential or key files, or CI/CD configuration. Write `.env.example` instead.
+- Deleting or wholesale replacing a file this run did not create.
+- Any git operation that writes refs.
 
-1. Identify responsibilities: transport mapping, business workflow, persistence, external calls
-2. Extract a new service/use case for one cohesive workflow at a time
-3. Move business rules, invariants, and transaction ownership into the new service
-4. Leave the controller/handler as thin transport glue
-5. Extract repository concerns into intent-oriented repository methods
-6. Update composition root or dependency wiring to inject the new service
-7. Add tests for the extracted service before removing logic from the old one
-8. Delete or deprecate the old methods once callers are migrated
+In `mode=auto`, everything else in the workflow runs without asking, and the run reports at the end. Pause for ambiguity only: missing design, conflicting decisions, or a risky choice with more than one reasonable option. In `mode=interactive`, show each planned file change and wait for approval.
 
-### Workflow: Add Middleware to an Existing Pipeline
+## License Gate for New Dependencies
 
-1. Read the current middleware stack and registration order
-2. Decide where the new middleware belongs: auth, validation, logging, rate limiting, error recovery, correlation IDs
-3. Implement the middleware as a focused unit with no business branching beyond its scope
-4. Register it in the framework pipeline in the correct order
-5. Add endpoint/contract tests that exercise the new behavior
-6. Verify existing routes still pass with `lsp_diagnostics` and the test suite
+Before adding a package, check its license in the registry metadata or the package's own files.
 
-### Workflow: Refactor a Repository Query
+- Permissive (MIT, Apache-2.0, BSD, ISC, and similar): proceed.
+- Copyleft (GPL, AGPL, LGPL, MPL, SSPL), "unknown", or no license: ask first, name the license, and suggest a permissive alternative if one exists.
+- List every new dependency and its license in the report.
 
-1. Read the current query, indexes, and callers
-2. Preserve the existing repository interface/signature unless the change is intentional
-3. Optimize or simplify the query while keeping it persistence-only
-4. Run integration tests against the real database or a close test double
-5. Check query plans or execution if the database supports it
-6. Update callers only if the return shape changes
-7. Never move business decisions into the repository; keep them in services
+## References
 
-## Pattern Reference
-
-### Minimal Controller Pattern (Express)
-```typescript
-// Express 5 forwards rejected promises from async handlers to the error middleware.
-// Express 4 does not: keep the try/catch + next(err), or wrap the handler.
-// Arrow-function class field keeps `this` bound for `router.post('/', controller.createUser)`.
-createUser = async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const dto = CreateUserSchema.parse(req.body);   // ZodError -> 400 in the error middleware
-    const user = await this.userService.createUser(dto);
-    res.status(201).json({ data: toUserResponse(user) });
-  } catch (err) {
-    next(err);
-  }
-};
-
-// Response DTO: explicit fields only, never password_hash or other secrets
-function toUserResponse(u: User): UserResponse {
-  return { id: u.id, email: u.email, displayName: u.displayName, createdAt: u.createdAt };
-}
-```
-
-### Minimal Router Pattern (FastAPI)
-```python
-# UserOut omits password_hash; with Pydantic v2 set model_config = ConfigDict(from_attributes=True)
-@router.post("/", status_code=status.HTTP_201_CREATED, response_model=UserOut)
-async def create_user(
-    data: UserCreate,
-    svc: Annotated[UserService, Depends(get_user_service)],
-):
-    # The service uses an async driver (SQLAlchemy AsyncSession, asyncpg), so await it.
-    # With a sync service, declare the endpoint with plain `def` so FastAPI runs it in a threadpool;
-    # never call blocking DB I/O inside `async def`.
-    return await svc.create_user(data)
-```
-
-### Minimal Handler Pattern (Go/Gin)
-```go
-func (h *UserHandler) CreateUser(c *gin.Context) {
-    var dto CreateUserDto
-    if err := c.ShouldBindJSON(&dto); err != nil {
-        c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
-        return // without return the handler keeps running and writes a second response
-    }
-    user, err := h.svc.CreateUser(c.Request.Context(), dto)
-    if err != nil {
-        _ = c.Error(err) // error middleware maps ErrEmailTaken -> 409, unknown -> 500
-        return
-    }
-    c.JSON(http.StatusCreated, toUserResponse(user))
-}
-```
-
-### Minimal Service Pattern
-```typescript
-async createUser(dto: CreateUserDto): Promise<User> {
-  const passwordHash = await this.passwordHasher.hash(dto.password); // argon2id (or bcrypt)
-  try {
-    // Map explicit fields; never persist the raw DTO
-    return await this.repo.create({
-      email: normalizeEmail(dto.email),
-      displayName: dto.displayName,
-      passwordHash,
-    });
-  } catch (err) {
-    // Rely on the unique constraint on email; no check-then-insert (it races).
-    // Unique violation: Postgres SQLSTATE 23505, MySQL error 1062, Prisma P2002.
-    // Match the specific constraint (pg `err.constraint`, Prisma `err.meta.target`),
-    // so another unique column does not surface as an email conflict.
-    if (isUniqueViolation(err, 'users_email_key')) throw new ConflictError('Email already registered'); // -> 409
-    throw err;
-  }
-}
-```
-
-- Never pass a request DTO straight to the repository; map the fields the entity needs.
-- Hash passwords in the service before persisting (argon2id or bcrypt, see `backend-auth`).
-- Enforce uniqueness with a database unique constraint and map the unique-violation error to 409. A prior `findBy...` check is optional UX, not the guarantee. On Postgres a unique violation aborts the surrounding transaction, so when this runs inside a wider transaction use a savepoint or `INSERT ... ON CONFLICT DO NOTHING` and check the affected row count.
-- Return a response DTO with explicit fields; never serialize the entity directly.
-
-### Layering Rules
-
-- Controllers/handlers: transport only, no business branching beyond response mapping
-- Services/use cases: business workflow, invariants, authorization, transaction ownership
-- Repositories: persistence only, no transport or domain orchestration
-- External adapters: email, queues, storage, HTTP clients behind interfaces/ports
-- Composition root: assemble concrete implementations and inject dependencies
-
-### Transaction Rules
-
-- Open transactions in the application/service layer, not in controllers
-- Repositories may participate in a transaction but should not decide cross-repository workflow
-- Keep transactions short and side-effect free
-- External side effects (email, webhooks, queues) happen after commit or through an outbox pattern
-
-### Testing Matrix
-
-#### Unit Tests
-- Service/use-case invariants
-- Error branches and authorization failures
-- Domain calculations and state transitions
-
-#### Integration Tests
-- Repository behavior against the real database (with the migrated schema) or a close test double; migration correctness itself is tested by `backend-migrate`
-- Unique-constraint violations mapped to 409
-- Transaction rollback behavior
-
-#### Endpoint / Contract Tests
-- Request validation
-- Response shape and error mapping
-- Authentication/authorization behavior
-
-## Concurrent & Partial Work
-
-See `_shared/tool-rules.md` (Concurrent & Partial Work) for checkpoint, resume, rollback, and multi-feature isolation rules.
-
-**Implement-specific caveat:** when resuming from a checkpoint, run `lsp_diagnostics` on all `created_files[]` and `modified_files[]` before continuing. Previously clean code may have drifted while the checkpoint was inactive.
+- [references/greenfield.md](references/greenfield.md): read when building a new service or module from a design (project layouts for Node, NestJS, FastAPI, Django, Go and Spring; what to generate per layer; decision trees for REST, GraphQL, database, auth and WebSocket).
+- [references/modify-workflows.md](references/modify-workflows.md): read when adding an endpoint, a field, middleware, or a query change to existing code.
+- [references/patterns.md](references/patterns.md): read when writing handlers, services or repositories (Express, FastAPI, Gin, Spring and service snippets; layering, transaction, idempotency and testing rules).
+- [references/post-generation-checklist.md](references/post-generation-checklist.md): read at Step 4, every run.
 
 ## Edge Cases
 
-- **No design exists**: Run `backend-architect` and `backend-api-design` first
-- **Memory is stale**: Run `backend-scan`
-- **Feature needs a schema change**: Hand it to `backend-migrate`; never write or apply migrations from this skill
-- **Complex business logic**: Break into smaller services, use domain modeling
-- **Legacy code**: Prefer the strangler pattern; wrap and replace incrementally
-- **Multiple languages**: Ask user which to prioritize
-- **Large project**: Change incrementally, confirm each layer before the next
-- **Existing tests**: Match existing test patterns and frameworks
-- **Fat controller temptation**: Move rules into services/use cases before adding more endpoints
-- **Repository doing too much**: Split query concerns from business workflow and inject collaborators
+- **No design exists**: run `backend-architect` and `backend-api-design` first, or proceed only on a design the user gives.
+- **Memory is stale**: run `backend-scan` before generating code against it.
+- **Feature needs a schema change**: hand it to `backend-migrate`; never write or apply migrations here.
+- **The user reports a bug while asking for a feature**: implement the feature; hand the bug to `backend-debug`.
+- **Complex business logic**: split it into smaller services or use cases with domain types.
+- **Legacy code**: add the feature behind a narrow interface and replace incrementally; any restructuring goes to `backend-refactor`.
+- **Multiple languages in the repo**: ask which service to change if the request does not say.
+- **Large feature**: build one layer at a time and snapshot the checkpoint after each.
+- **Existing tests**: match their framework, layout and fixtures.
+- **Fat controller temptation**: never add business rules to a handler to save time. Put new rules in a service; if the controller is already fat, hand the split to `backend-refactor` before adding more endpoints.
+- **Repository doing too much**: keep new queries intent-oriented and persistence-only; inject collaborators into the service instead of the repository, and hand any split of existing repository code to `backend-refactor`.
+- **Stack not covered by references**: follow the framework's own conventions and map them to the same layers (transport, service, repository).

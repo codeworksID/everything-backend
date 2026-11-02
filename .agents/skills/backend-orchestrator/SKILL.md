@@ -1,151 +1,122 @@
 ---
 name: backend-orchestrator
-description: "Route backend requests to the correct backend sub-skill."
+description: Routes backend requests to the right everything-backend skill and runs multi-skill pipelines (new feature, greenfield project, schema change, bug fix, refactor, security review, production readiness, memory refresh) with gates between steps. Use when a backend request spans several steps, when it is unclear which backend skill applies, or for broad asks such as "build a backend", "help with my backend", "add a feature end to end", "build this from scratch", "change the schema and ship it", "fix this bug and make sure it stays fixed", "is this ready for production", or "what should I do next on this service". Not for requests that clearly name one skill; activate that skill directly.
 ---
 
 # Backend Orchestrator
 
-## When to Activate
+Pick the right skill for a backend request, or chain several skills into a gated pipeline. The orchestrator itself writes no code or files. The routed skills do the work, own their memory updates, and run their own checkpoints.
 
-Activate this skill when the user asks for backend help without naming a specific skill, for example "build backend", "help with backend", or "create API".
+## Before You Start
 
-## Available Sub-Skills
+1. Resolve the shared docs folder ("<shared>"): first `_shared/` inside this skill's folder (bundled installs, e.g. Claude.ai), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
+2. Read `<shared>/tool-rules.md` (mode=auto contract, Always Ask First, checkpoints) and `<shared>/host-tools.md` if the actions below do not map cleanly to your host's tools.
+3. Check project state per `<shared>/context-loading.md`: is there a backend project, and does `.opencode/everything-backend-memory/` exist and look fresh? Missing or stale memory on an existing project means the pipeline starts with `backend-scan`. No project at all means Greenfield.
+4. If the detected stack matches a file in `<shared>/stacks/`, note it; the routed skills read it.
 
-- `backend-scan` — Explore an existing backend project and keep memory files in sync.
-- `backend-architect` — Plan backend architecture and tech stack.
-- `backend-db-design` — Design target database schemas and migration plans (no migration files).
-- `backend-api-design` — Design API endpoints and contracts.
-- `backend-implement` — Generate or modify backend code.
-- `backend-test` — Design and generate tests.
-- `backend-auth` — Design and implement authentication and authorization.
-- `backend-doctor` — Run health checks and code reviews.
-- `backend-ops` — Design observability, caching, async messaging, and config.
-- `backend-deploy` — Set up deployment, containers, and CI/CD.
-- `backend-migrate` — Evolve database schemas; the only skill that writes and applies migration files.
-- `backend-visualize` — Generate Mermaid diagrams (ERD, class, actor, flowchart, sequence, architecture).
-- `backend-refactor` — Behavior-preserving refactoring: split fat controllers/services, extract modules, reduce coupling, dependency inversion, strangler-fig, modernize legacy.
+## Skills and What They Own
 
-## Routing Table
+Each skill has exactly one owner role. Route by the owner, not by keyword overlap.
 
-| User Intent | Route To |
-|-------------|----------|
-| Explore, understand, scan, or sync memory | `backend-scan` |
-| Design architecture or plan structure | `backend-architect` |
-| Design database schema or tables | `backend-db-design` |
-| Design API endpoints or routes | `backend-api-design` |
-| Generate code or modify an existing backend | `backend-implement` |
-| Write tests or test strategy | `backend-test` |
-| Add auth, login, permissions, sessions | `backend-auth` |
-| Check health, review, or audit code | `backend-doctor` |
-| Logging, metrics, caching, queues, config | `backend-ops` |
-| Deploy, Docker, CI/CD, infrastructure | `backend-deploy` |
-| Evolve schema, migrations, backfills | `backend-migrate` |
-| Refactor, split, extract, reduce coupling, modernize legacy (behavior-preserving) | `backend-refactor` |
-| Visualize database, draw ERD, create class diagram, diagram schema, architecture diagram | `backend-visualize` |
+| Skill | Owns | Typical phrases |
+|-------|------|-----------------|
+| `backend-scan` | Learning an existing project; creating and syncing memory | explore, understand, what's here, scan, refresh memory |
+| `backend-architect` | Architecture, stack choice, ADRs (`docs/architecture/overview.md`, `docs/adr/`) | design the architecture, pick a stack, monolith or microservices |
+| `backend-visualize` | Mermaid diagrams: ERD, class, actor, flowchart, sequence, architecture | draw an ERD, diagram this, show the flow |
+| `backend-db-design` | Target schema design (no migration files) | design tables, model this data, indexes |
+| `backend-migrate` | Writing and applying migrations, backfills, expand/contract | add a column, migration, backfill, rename a table |
+| `backend-api-design` | Endpoint contracts, OpenAPI, GraphQL, gRPC | design endpoints, API contract, versioning |
+| `backend-auth` | Authentication and authorization design and code | login, JWT, sessions, roles, permissions |
+| `backend-implement` | Building new features and endpoints | implement, build, add endpoint, write the code |
+| `backend-refactor` | Behavior-preserving restructuring | refactor, split, extract, decouple, modernize |
+| `backend-test` | Test strategy and test code | write tests, coverage, test plan |
+| `backend-debug` | Bug triage and fixing: reproduce, failing test, root cause, minimal fix, regression test | bug, error, 500, broken, failing, regression, why is X slow |
+| `backend-security` | Threat model, OWASP API Top 10 review, secret scan, SAST, supply chain, SBOM (read-only by default) | security review, threat model, OWASP, pentest prep, secrets scan, SBOM |
+| `backend-doctor` | Execution-based health check: build, lint, tests, dependency audit, code review | health check, run doctor, review my code, what's wrong |
+| `backend-ops` | Observability, caching, queues, config, resilience patterns, backup/restore/DR, runbooks | logging, metrics, alerts, retries, circuit breaker, backups, DR |
+| `backend-deploy` | Containers, CI/CD, release strategy, migration step in the pipeline, rollback, post-deploy checks | deploy, Docker, Kubernetes, CI/CD, rollout, rollback |
 
-## How to Route
+## Routing Procedure
 
-Identify the intent, then activate the named skill directly using the mechanism available to you.
+1. **Classify the request.**
+   - *Review-only*: the user asks to review, audit, assess, check, or "is it ready". Pass `review-only` to every routed skill (defined in `<shared>/tool-rules.md` -> mode=auto Contract): report findings and write no source, config, CI, or infrastructure files. Report files and memory entries that are a review skill's stated output (for example `docs/security/review-<YYYYMMDD>.md`, `issues.md`) are allowed; if the user said "don't write anything", skip those too.
+   - *Change*: the user wants something built, fixed, or changed.
+2. **Match intents** against the table above and the precedence rules below.
+   - One match: route to that skill.
+   - Several matches that form a known chain: run the matching workflow (see Workflows).
+   - Several matches with no workflow: run them in sequence in dependency order (design -> migrate -> implement -> test -> review -> diagram -> deploy). Each step starts only when the previous step's exit criteria are met.
+   - No match: ask one clarifying question that offers the two or three closest routes. If the request is outside backend work, say so and stop.
+3. **Announce the route** before starting, in one or two lines: the skill or workflow, the feature slug, the run mode, and the steps. The user can correct it.
+4. **Invoke each skill by name** with your host's skill mechanism (load its `SKILL.md`, or delegate to a subagent if your host supports it). Pass:
+   - `mode`: `auto` by default, `interactive` if the user asked to confirm steps (see `<shared>/tool-rules.md` -> mode=auto Contract);
+   - `feature=<slug>`: a short kebab-case name for the work (for example `user-registration`), the same slug for every step, so checkpoints line up;
+   - `review-only` when step 1 set it;
+   - for `backend-scan`: `scope=initial` or `scope=sync`.
+5. **Hand off between steps** with a short summary of the previous step's output (files, decisions, open issues). Do not restate memory contents; each skill loads its own context.
+
+### Precedence Rules
+
+- Something is broken, failing, erroring, regressed, or slow -> `backend-debug` first. Never route bug fixing to `backend-implement` or `backend-refactor`.
+- Performance ("why is X slow", p95 up): `backend-debug` reproduces and finds the cause; then `backend-ops` for caching, pooling, or queue changes, and `backend-doctor` for a performance review of the code.
+- Security review, threat model, OWASP, pentest prep, secrets scan, SBOM, dependency vulnerabilities -> `backend-security`, not `backend-doctor`. Security fixes then go to `backend-auth` (authn/authz), `backend-debug` (a defect in existing code), `backend-implement` (a new control) or `backend-deploy` (pipeline and image hardening).
+- New behavior -> `backend-implement`. Same behavior, new structure -> `backend-refactor`. If a request mixes both, refactor first (with a passing test baseline), then implement.
+- Any schema change -> `backend-db-design` for the target schema, then `backend-migrate` for the files. Only `backend-migrate` writes or applies migrations.
+- API shape not yet designed -> `backend-api-design` before `backend-implement`.
+- "Deploy" with pending migrations -> `backend-deploy` runs them as a gated pipeline step (expand -> deploy -> contract); authoring goes to `backend-migrate`.
+- Diagrams describe the final state: run `backend-visualize` after the change it depicts.
+- "Migrate" meaning a framework or language move (for example "migrate to Spring Boot 3") is an upgrade, not `backend-migrate`.
+
+### Requests No Skill Fully Owns Yet
+
+| Request | What to do |
+|---------|-----------|
+| Production incident ("prod is down", outage) | Say there is no incident-response skill. Ask what the user has already done. Use `backend-debug` for root cause on code they can run locally, and the runbooks from `backend-ops` (`docs/runbooks/`). Never deploy, roll back, or touch production without explicit confirmation. |
+| Dependency or framework upgrade | Say there is no upgrade skill. Run `backend-test` to secure a passing baseline, then `backend-refactor` for code changes; installs and upgrades are Always Ask First. Use `backend-security` if the trigger is a vulnerability. |
+| Load testing against an SLO | Say no skill owns load testing. Record it as an open item in the readiness report. |
 
 ## Workflows
 
-Use these multi-skill pipelines when the user request spans more than one concern. Each step lists the memory files it reads or writes.
+Step-by-step details, outputs, and branches are in `references/workflows.md`. Pick one by the first matching row.
 
-### New Feature (Full Stack)
+| Workflow | Use when | Chain |
+|----------|----------|-------|
+| Greenfield | No project exists yet ("from scratch") | architect -> db-design -> migrate -> api-design -> auth -> implement -> test -> security -> ops -> deploy -> doctor |
+| Bug Fix | Something is broken, failing, or slow | debug -> test -> doctor |
+| Schema Change | A table, column, index, or constraint changes on an existing DB | db-design -> migrate -> implement -> test -> deploy |
+| New Feature | Significant feature on an existing backend | [scan] -> db-design -> [migrate] -> api-design -> [auth] -> implement -> test -> doctor |
+| Quick Add Endpoint | Small endpoint, stack and schema already known | api-design -> implement -> test -> [security or auth if sensitive] |
+| Refactor | Restructure without behavior change, optionally then document | test baseline -> refactor -> doctor -> [scan sync -> visualize] |
+| Security Review | Security review, threat model, pentest prep | security -> [auth, debug or implement fixes, approved] -> test -> security re-check |
+| Production Readiness | Before launch, "is it ready" | security -> ops -> deploy -> doctor, ending in the readiness checklist |
+| Memory Refresh | Memory may be out of date | scan (scope=sync) -> [doctor, only if asked] |
 
-Use when adding a significant feature to an existing backend.
+Brackets mean conditional. Add `backend-visualize` at the end of any workflow when the user asks for diagrams.
 
-1. **`backend-scan`** (if `.opencode/everything-backend-memory/` is empty or stale)
-   - Reads/writes: `project-overview.md`, `tech-stack.md`, `api-patterns.md`, `db-schema.md`, `decisions.md`, `issues.md`
-   - Branching: If scan cannot locate or read the project → escalate to user with the specific path/permission error. If memory files exist but are partially stale → re-run with `scope=sync` instead of full scan.
-2. **`backend-db-design`**
-   - Reads: `tech-stack.md`, `project-overview.md`, `db-schema.md`
-   - Writes: `db-schema.md` (target schema), migration plan (handed to step 3)
-   - Branching: If the feature requires a schema change discovered mid-design → re-run from step 2 with the new requirement. If the schema design conflicts with existing tables → escalate to user.
-3. **`backend-migrate`** (only if the feature changes the schema)
-   - Reads: migration plan from step 2, `db-schema.md`, `tech-stack.md`, `decisions.md`, existing migrations
-   - Writes: migration files, `db-schema.md`, `decisions.md` (migration conventions, scheduled contract steps)
-   - Branching: Applying migrations follows `_shared/tool-rules.md` → Always Ask First, also in `mode=auto`; generating files does not. If the plan needs expand/contract across releases → record the later contract step in `decisions.md` and continue with the expand phase only. If the plan cannot be applied safely (locks, data loss, conflicting existing data) → loop back to step 2 with the specific constraint.
-4. **`backend-api-design`**
-   - Reads: `tech-stack.md`, `project-overview.md`, `api-patterns.md`
-   - Writes: `api-patterns.md`, OpenAPI/endpoint docs
-   - Branching: If API design needs a schema that was not defined in step 2 → loop back to step 2 (`backend-db-design`), then step 3 (`backend-migrate`). If existing API patterns conflict with the new design → escalate to user.
-5. **`backend-auth`** (only if the feature needs auth, permissions, sessions, or JWT)
-   - Reads: `tech-stack.md`, `project-overview.md`, `api-patterns.md`
-   - Writes: `decisions.md`
-   - Branching: If auth design reveals an API contract change → loop back to step 4 (`backend-api-design`). If auth conflicts with project-overview constraints → escalate to user.
-6. **`backend-implement`**
-   - Reads: `tech-stack.md`, `api-patterns.md`, `db-schema.md`
-   - Writes: source code, tests (schema changes are handed to `backend-migrate`, never written here)
-   - Branching: If implementation uncovers a missing schema field or relationship → loop back to step 2 (`backend-db-design`), then step 3 (`backend-migrate`), then step 4 (`backend-api-design`), then resume step 6. If a design flaw is found → loop back to the relevant design step with the specific gap noted. If a schema change is requested after implementation has started → loop back to `backend-db-design`, then `backend-migrate`, then resume step 6.
-7. **`backend-test`**
-   - Reads: `tech-stack.md`, `api-patterns.md`
-   - Writes: test files, coverage reports
-   - Branching: If tests fail on the implementation (not on test bugs) → re-run from step 6 (`backend-implement`) with the failing test details. If coverage is below the project target → re-run from step 7 with additional tests.
-8. **`backend-doctor`**
-   - Reads: `tech-stack.md`, `project-overview.md`, `api-patterns.md`
-   - Writes: `issues.md` (new findings)
-   - Branching: If Critical findings → STOP. Report them, fix through the skill that owns the issue (for example `backend-implement`, `backend-auth`, `backend-migrate`), then re-run step 8 (`backend-doctor`). If High findings → present to user; continue only after acknowledgment. If Medium/Low → note in issues.md and complete the workflow.
-   - Completion criteria: All Critical and High findings resolved (or explicitly accepted by the user), Medium/Low findings logged to `issues.md`, and the feature is ready for review or merge.
+## Gates and Loops
 
-### Quick Add Endpoint
+These rules apply to every workflow. They are stated once here; `references/workflows.md` only adds workflow-specific branches.
 
-Use when the stack is already known and only a small endpoint change is needed.
+- **Always Ask First stays in force.** Applying migrations, deploys, git ref writes, dependency installs, CI/CD and secret edits, and non-local targets need confirmation in every mode (`<shared>/tool-rules.md` -> Always Ask First, Production Targets). The orchestrator never batches these approvals across steps.
+- **Severity gates** (from `backend-doctor`, `backend-security`, or `backend-test`):
+  - Critical: stop the pipeline. Report the finding and the owning skill, and wait for the user's approval before any fix. After the fix, re-run the step that found it.
+  - High: present it and ask the user to choose fix now, accept the risk, or stop. Continue only on an explicit answer.
+  - Medium and Low: make sure they are logged in `issues.md` and continue.
+- **Loop-backs**: a design gap found later returns to the owning design step (`backend-api-design`, `backend-db-design`, `backend-auth`) with the specific gap. A schema change found mid-implementation goes `backend-db-design` -> `backend-migrate` -> resume `backend-implement`.
+- **Iteration cap**: any loop (implement <-> test, fix <-> re-check, design <-> implement) runs at most 3 times. After the third failed pass, stop and report what was tried, the current failure, and the options.
+- **Test integrity**: a failing test is fixed in the code by the owning skill (`backend-debug` for bugs, `backend-implement` for new features), never by weakening the test (`<shared>/tool-rules.md` -> Test Integrity).
+- **Interruptions**: if a step stops mid-way, tell the user which step and slug; re-invoking the same skill with the same slug offers to resume from its checkpoint.
 
-1. **`backend-api-design`**
-   - Reads: `tech-stack.md`, `api-patterns.md`
-   - Writes: `api-patterns.md`
-   - Branching: If the endpoint requires schema changes not in `db-schema.md` → escalate to user; do not silently expand scope. If existing API patterns conflict with the new endpoint → escalate to user.
-2. **`backend-implement`**
-   - Reads: `tech-stack.md`, `api-patterns.md`
-   - Writes: source code
-   - Branching: If implementation reveals the API design is incomplete → loop back to step 1 with the specific gap. If a schema change is requested after implementation has started → loop back to `backend-db-design`, then `backend-migrate`, then resume step 2.
-3. **`backend-test`**
-   - Reads: `tech-stack.md`, `api-patterns.md`
-   - Writes: test files
-   - Branching: If tests fail on the implementation (not on test bugs) → re-run from step 2 (`backend-implement`) with the failing test details. If coverage is below the project target → re-run from step 3 with additional tests.
-   - Completion criteria: All tests pass, coverage meets the project target, and the endpoint behaves as specified in the API design.
+## Output
 
-### Production Readiness
+At the end of a workflow, report:
 
-Use before launch or before declaring a service production-ready.
+1. The route taken and each step's result (done, skipped and why, or stopped).
+2. Files created or changed, by step, as reported by the routed skills.
+3. Findings by severity, with what was fixed, accepted, or left open.
+4. Actions still waiting on the user (approvals, contract migrations, open readiness items).
 
-1. **`backend-ops`**
-   - Reads: `tech-stack.md`, `project-overview.md`, `api-patterns.md`, `decisions.md`
-   - Writes: observability/config code, `decisions.md`
-   - Branching: If observability/caching/config design uncovers a missing API contract → loop back to `backend-api-design` with the specific gap. If conflicts with existing project-overview constraints → escalate to user.
-2. **`backend-deploy`**
-   - Reads: `tech-stack.md`, `project-overview.md`, `decisions.md`
-   - Writes: Docker/CI/CD/infrastructure files
-   - Branching: If deployment setup requires an environment change not in `decisions.md` → loop back to step 1 (`backend-ops`) to record the decision first. If CI/CD health checks fail on a real run → re-run from step 2 with the failure log.
-3. **`backend-doctor`**
-   - Reads: `tech-stack.md`, `project-overview.md`, `api-patterns.md`
-   - Writes: `issues.md`
-   - Branching: If Critical findings → STOP. Report them, fix through the skill that owns the issue (for example `backend-ops`, `backend-deploy`, `backend-auth`, `backend-implement`), then re-run step 3 (`backend-doctor`). If High findings → present to user; continue only after acknowledgment. If Medium/Low → note in issues.md and complete the workflow.
-   - Completion criteria: All Critical and High findings resolved (or explicitly accepted by the user), Medium/Low findings logged to `issues.md`, and the service is deemed production-ready by the user.
+Done when every step in the chosen workflow met its exit criteria or was explicitly skipped by the user, no Critical finding is open, every High finding is fixed or accepted by the user, and the report above is delivered.
 
-### Memory Refresh
+## References
 
-Use when memory files may be out of sync with the codebase.
-
-1. **`backend-scan`** with `scope=sync`
-   - Reads: existing `.opencode/everything-backend-memory/*.md`
-   - Writes: updated `project-overview.md`, `tech-stack.md`, `api-patterns.md`, `db-schema.md`, `decisions.md`, `issues.md`
-   - Branching: If sync cannot locate the project or memory directory → escalate to user with the specific path error. If a memory file is corrupt or unreadable → escalate to user; do not silently drop it.
-2. **`backend-doctor`**
-   - Reads: refreshed memory files
-   - Writes: `issues.md`
-   - Branching: If Critical findings → STOP. Report them, fix through the skill that owns the issue (for example `backend-implement`, `backend-auth`, `backend-migrate`), then re-run step 2 (`backend-doctor`). If High findings → present to user; continue only after acknowledgment. If Medium/Low → note in issues.md and complete the workflow.
-   - Completion criteria: All memory files reflect the current codebase, all Critical and High findings resolved (or explicitly accepted by the user), and Medium/Low findings are logged to `issues.md`.
-
-## Branching & Failure Rules
-
-These rules apply generically across all four workflows. Individual steps may add workflow-specific branches, but the baseline is:
-
-- Critical findings: STOP. Fix through the skill that owns the issue, then re-run that workflow's `backend-doctor` step.
-- High findings: pause for user decision (redesign vs patch).
-- Medium/Low findings: log to `issues.md` and continue.
-- A design flaw discovered mid-implementation → loop back to the design step (`backend-api-design` or `backend-db-design`) with the specific gap noted.
-- A schema change requested after `backend-implement` has started → loop back to `backend-db-design`, then `backend-migrate`, then resume `backend-implement`.
-
-For the principles and tool rules referenced by the routed skills, see `_shared/principles.md` and `_shared/tool-rules.md`.
+- `references/workflows.md`: read when running any multi-step workflow, for each step's output, branches, and exit criteria.

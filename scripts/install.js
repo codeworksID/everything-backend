@@ -10,7 +10,17 @@ const readline = require("node:readline");
 
 const GLOBAL_TARGETS = [
   {
+    id: "claude",
+    host: "claude",
+    name: "Claude Code (~/.claude/skills)",
+    target: path.join(os.homedir(), ".claude", "skills"),
+    writePluginJson: false,
+    skillsSubdirectory: false,
+    claudeCode: true,
+  },
+  {
     id: "gemini",
+    host: "antigravity",
     name: "Antigravity (Gemini IDE)",
     target: path.join(os.homedir(), ".gemini", "config", "plugins", "everything-backend-plugin"),
     writePluginJson: true,
@@ -18,6 +28,7 @@ const GLOBAL_TARGETS = [
   },
   {
     id: "cursor",
+    host: "cursor",
     name: "Cursor",
     target: path.join(os.homedir(), ".cursor", "skills"),
     writePluginJson: false,
@@ -25,6 +36,7 @@ const GLOBAL_TARGETS = [
   },
   {
     id: "opencode",
+    host: "opencode",
     name: "Opencode / generic global skills",
     target: path.join(os.homedir(), ".agents", "skills"),
     writePluginJson: false,
@@ -32,20 +44,59 @@ const GLOBAL_TARGETS = [
   },
 ];
 
+const HOST_NAMES = GLOBAL_TARGETS.map((entry) => entry.host);
+
+const PROJECT_LAYOUTS = [
+  {
+    name: ".agents/skills (OpenCode, Cursor, generic)",
+    segments: [".agents", "skills"],
+    claudeCode: false,
+  },
+  {
+    name: ".claude/skills (Claude Code)",
+    segments: [".claude", "skills"],
+    claudeCode: true,
+  },
+];
+
+const CLAUDE_PLUGIN_COMMANDS = [
+  "/plugin marketplace add codeworksID/everything-backend",
+  "/plugin install everything-backend@codeworks",
+];
+
+function printClaudeCodeNote() {
+  writeLog("");
+  writeLog("Note for Claude Code: the guard hook (asks before destructive git, migration,");
+  writeLog("deploy and secret-file operations) only comes with the plugin install.");
+  writeLog("To get it, run these inside Claude Code:");
+  for (const command of CLAUDE_PLUGIN_COMMANDS) {
+    writeLog(`  ${command}`);
+  }
+  writeLog("If you install the plugin, you can remove the copied skills to avoid duplicates.");
+}
+
 function printHelp() {
   console.log(`everything-backend installer
 
 Usage:
-  everything-backend [--dry-run] [--force] [--target <path>]
-  node scripts/install.js [--dry-run] [--force] [--target <path>]
+  everything-backend [--dry-run] [--force] [--host <name>] [--target <path>]
+  node scripts/install.js [--dry-run] [--force] [--host <name>] [--target <path>]
 
 Options:
   --dry-run        Show planned file operations without writing
   --force          Overwrite an already-installed skill directory
-  --target <path>  Custom destination for installed skills (bypasses interactive prompts)
+  --host <name>    Global install for one host, no prompts: ${HOST_NAMES.join(" | ")}
+  --target <path>  Custom destination for installed skills (bypasses interactive prompts;
+                   overrides the --host destination when both are given)
   --version, -v    Print version and exit
   --update         Print self-update instructions and exit
   --help           Show this message
+
+Claude Code plugin (skills plus the guard hook), run inside Claude Code:
+  ${CLAUDE_PLUGIN_COMMANDS.join("\n  ")}
+
+Claude.ai: in a clone of the repo run "npm run build:claude", then upload each
+dist/claude-skills/<skill>.zip under Settings > Capabilities > Skills.
 `);
 }
 
@@ -151,6 +202,8 @@ function parseArgs(argv) {
     mode: "project", // default mode
     writePluginJson: false,
     skillsSubdirectory: false,
+    host: null,
+    claudeCode: false,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -192,7 +245,31 @@ function parseArgs(argv) {
       continue;
     }
 
+    if (arg === "--host") {
+      const value = (argv[index + 1] || "").toLowerCase();
+      if (!value) {
+        throw new Error(`Missing value for --host (one of: ${HOST_NAMES.join(", ")})`);
+      }
+      if (!HOST_NAMES.includes(value)) {
+        throw new Error(`Unknown host "${value}" (one of: ${HOST_NAMES.join(", ")})`);
+      }
+      options.host = value;
+      index += 1;
+      continue;
+    }
+
     throw new Error(`Unknown argument: ${arg}`);
+  }
+
+  if (options.host) {
+    const selected = GLOBAL_TARGETS.find((entry) => entry.host === options.host);
+    options.mode = "global";
+    if (!options.explicitTarget) {
+      options.target = selected.target;
+    }
+    options.writePluginJson = selected.writePluginJson;
+    options.skillsSubdirectory = selected.skillsSubdirectory;
+    options.claudeCode = Boolean(selected.claudeCode);
   }
 
   return options;
@@ -205,6 +282,24 @@ async function pathExists(targetPath) {
   } catch {
     return false;
   }
+}
+
+async function realOrResolved(p) {
+  try {
+    return await fs.realpath(p);
+  } catch {
+    return path.resolve(p);
+  }
+}
+
+// True when child is parent or lies inside it.
+function isInsideOrEqual(child, parent) {
+  const norm = (p) => {
+    const r = path.resolve(p);
+    return process.platform === "win32" ? r.toLowerCase() : r;
+  };
+  const rel = path.relative(norm(parent), norm(child));
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
 }
 
 async function copyDirectory(source, destination) {
@@ -246,8 +341,8 @@ async function main() {
   }
 
   try {
-    // Interactive flow if --target is not provided
-    if (!options.explicitTarget) {
+    // Interactive flow if neither --target nor --host is provided
+    if (!options.explicitTarget && !options.host) {
       // If running as a postinstall script during npm i, never prompt: print instructions and exit.
       // Prompting during npm i is broken due to npm's output suppression and loading spinner.
       // Explicit CLI runs (node scripts/install.js, npx everything-backend) always proceed.
@@ -310,6 +405,7 @@ async function main() {
         options.target = selectedApp.target;
         options.writePluginJson = selectedApp.writePluginJson;
         options.skillsSubdirectory = selectedApp.skillsSubdirectory;
+        options.claudeCode = Boolean(selectedApp.claudeCode);
       } else {
         options.mode = "project";
         let projectPath = "";
@@ -334,7 +430,26 @@ async function main() {
           return;
         }
 
-        options.target = path.join(projectPath, ".agents", "skills");
+        writeLog("Which skills folder layout should the project use?");
+        PROJECT_LAYOUTS.forEach((layout, index) => {
+          writeLog(`${index + 1}) ${layout.name}`);
+        });
+        const validLayoutChoices = PROJECT_LAYOUTS.map((_, index) => String(index + 1));
+        let layoutChoice = "";
+        let layoutAttempts = 0;
+        while (!validLayoutChoices.includes(layoutChoice) && layoutAttempts < 5) {
+          layoutChoice = await askQuestion(`Choose an option [1-${PROJECT_LAYOUTS.length}]: `);
+          layoutAttempts++;
+        }
+
+        if (layoutAttempts >= 5 && !validLayoutChoices.includes(layoutChoice)) {
+          writeLog("Non-interactive environment detected or prompt timed out. Skipping installation.");
+          return;
+        }
+
+        const layout = PROJECT_LAYOUTS[Number(layoutChoice) - 1];
+        options.target = path.join(projectPath, ...layout.segments);
+        options.claudeCode = layout.claudeCode;
       }
     }
 
@@ -363,6 +478,13 @@ async function main() {
       ? path.join(options.target, "skills")
       : options.target;
 
+    // --force deletes each destination skill directory before copying. If the
+    // destination is the source (or inside it), that would delete the pack itself.
+    const realSource = await realOrResolved(sourceRoot);
+    if (isInsideOrEqual(await realOrResolved(skillsDestTarget), realSource)) {
+      throw new Error(`Install target ${skillsDestTarget} is inside the skills source ${sourceRoot}; choose another --target`);
+    }
+
     if (!options.dryRun) {
       await fs.mkdir(skillsDestTarget, { recursive: true });
     }
@@ -383,6 +505,9 @@ async function main() {
       }
 
       if (destinationExists) {
+        if (isInsideOrEqual(realSource, await realOrResolved(destinationPath))) {
+          throw new Error(`Refusing to replace ${destinationPath}: it contains the skills source ${sourceRoot}`);
+        }
         await fs.rm(destinationPath, { recursive: true, force: true });
       }
 
@@ -391,6 +516,9 @@ async function main() {
     }
 
     writeLog(options.dryRun ? "Dry run complete." : `Install complete. Skills available in ${options.target}`);
+    if (options.claudeCode) {
+      printClaudeCodeNote();
+    }
   } finally {
     cleanTTY();
   }

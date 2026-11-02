@@ -1,282 +1,186 @@
 ---
 name: backend-deploy
-description: "Own deployment and infrastructure setup for backend projects. Use this skill when the user says 'deploy', 'Docker', 'CI/CD', 'GitHub Actions', 'GitLab CI', 'Kubernetes', 'docker-compose', or 'infrastructure'. Generates container configs, local orchestration, pipeline templates, health checks, environment promotion, and deployment decision trees."
+description: Plans and generates deployment for backend services. Picks a target (PaaS, containers on a VM, Kubernetes, serverless), writes Dockerfiles for Node, Python, Go and Java, docker compose for local runs, CI/CD pipelines with a gated migration step, Kubernetes manifests or Helm values, and a release plan with rolling, blue-green or canary strategy, rollback and post-deploy checks. Validates the artifacts locally and records the setup in deployment memory and a deploy runbook. Use when the user says deploy, ship to production, Dockerfile, containerize, docker compose, CI/CD, GitHub Actions, GitLab CI, pipeline, Kubernetes, K8s, Helm, readiness or liveness probes, release strategy, canary, blue-green, rollback a release, or environment promotion. Not for writing migrations (backend-migrate), backup, DR and resilience (backend-ops), code health checks (backend-doctor) or security review (backend-security).
 ---
 
 # Backend Deploy
 
-## When to Activate
+Turns a working backend into something that builds, ships and rolls back safely. This skill generates and validates deployment files and the release plan. It never deploys, pushes images or applies infrastructure on its own: those steps are Always Ask First, and they normally run in the user's CI.
 
-- User wants to deploy a backend or set up infrastructure
-- User mentions Docker, docker-compose, containerization, or multi-stage builds
-- User asks about CI/CD, GitHub Actions, GitLab CI, or automated deploy pipelines
-- User mentions Kubernetes, K8s, Helm, or container orchestration
-- User asks about dev/staging/prod environments, secrets, or environment promotion
-- User asks about readiness/liveness probes, graceful shutdown, or health checks
-- User asks whether to use containers, serverless, or a PaaS
+## When to Use
 
-## Prerequisites
+- Containerize a service, or fix a Dockerfile or compose file.
+- Create or update a CI/CD pipeline, including the migration step and the deploy job.
+- Choose where to run the service, or move from one platform to another.
+- Add Kubernetes manifests or Helm values, probes, autoscaling or disruption budgets.
+- Plan a release: strategy, migration order, rollback, post-deploy verification.
+- Run a release the user explicitly asks for (see Running a Release).
 
-See `_shared/tool-rules.md` for the investigation toolkit. Use cross-platform tools (`glob`, `read`) instead of shell-specific commands.
+Not for: authoring or applying migrations outside a pipeline (backend-migrate); health endpoint code, resilience, backups and DR, SLO alerts (backend-ops); code-level health checks (backend-doctor); threat modeling, image or secret scanning review (backend-security).
 
-- REQUIRED: project root confirmed and readable
-  - Check: `glob` for `src/`, `app/`, `internal/`, or `lib/` directories
-  - If missing: stop and ask the user for the correct project path
-- REQUIRED: `_shared/principles.md` loaded (Security section at minimum)
-  - Check: resolve `_shared/principles.md` as described in `_shared/context-loading.md` → Resolving `_shared/` Files (sibling of this skill's folder first)
-  - If missing: warn once and continue with this skill's own rules; do not stop
-- REQUIRED: manifest files read to detect stack
-  - Check: `glob` for `package.json`, `pyproject.toml`, `go.mod`, `pom.xml`, or `build.gradle`
-  - If missing: stop and ask the user to point at a backend project with a known manifest
-- RECOMMENDED: `.opencode/everything-backend-memory/tech-stack.md` exists and is non-empty
-  - Check: `glob .opencode/everything-backend-memory/tech-stack.md`
-  - If missing: run `backend-scan` to populate memory, or proceed with project-only context if the user confirms
-- RECOMMENDED: `.opencode/everything-backend-memory/project-overview.md` exists
-  - Check: `glob .opencode/everything-backend-memory/project-overview.md`
-  - If missing: run `backend-scan` to populate memory, or proceed with project-only context if the user confirms
-- RECOMMENDED: `db-schema.md` exists to know required backing services
-  - Check: `glob .opencode/everything-backend-memory/db-schema.md`
-  - If missing: run `backend-scan` to populate memory, or proceed without it and ask the user about required services
-- RECOMMENDED: existing deployment artifacts detected
-  - Check: `glob` for `Dockerfile*`, `docker-compose*.yml`, `compose*.yml`, `.dockerignore`, `.github/workflows/*`, `.gitlab-ci.yml`
-  - If found: read them and propose a diff/patch rather than regenerating (see `_shared/tool-rules.md` → Always Ask First)
-- If any REQUIRED Check fails, run `backend-scan` with `mode=auto`, then re-run these checks. If the missing file is a project file (e.g., manifest, source dir) that `backend-scan` cannot create, stop and ask the user. A missing `_shared/` file is not a failure here; it follows the warn-and-continue rule above.
+## Before You Start
 
-## Required Context
+1. Resolve the shared docs folder ("<shared>"): first `_shared/` inside this skill's folder (bundled installs, e.g. Claude.ai), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
+2. Read `<shared>/tool-rules.md` (mode=auto contract, Production Targets, Command Time Budgets, checkpoints) and `<shared>/host-tools.md` if the action names below don't match your host's tools. Read the System and Security sections of `<shared>/principles.md`.
+3. Load project memory per `<shared>/context-loading.md`: `project-overview.md`, `tech-stack.md`, `deployment.md` (priority 7) and `db-schema.md` for backing services; `decisions.md` for prior hosting choices. A missing `deployment.md` is expected on the first run; this skill creates it.
+4. If the detected stack matches a file in `<shared>/stacks/`, read it. Its Dockerfile, health and shutdown sections take precedence over the generic templates here.
 
-Read memory files before generating deployment artifacts. For canonical backend principles, see `_shared/principles.md`; for tool rules, see `_shared/tool-rules.md`; for loading strategy, see `_shared/context-loading.md`.
+## Execution Boundary
 
-1. REQUIRED: `_shared/principles.md` → only relevant sections (Code/Architecture and System for deploy)
-2. REQUIRED: `tech-stack.md` - language, framework, database, cache, ORM
-3. REQUIRED: `project-overview.md` - project type, structure, entry points
-4. OPTIONAL: `db-schema.md` - required services (DB, cache, queue)
-5. OPTIONAL: `api-patterns.md` (useful for deploy)
-6. OPTIONAL: `decisions.md` - prior architecture or hosting decisions
-7. SKIP: `issues.md` unless reviewing risks
+Follows `<shared>/tool-rules.md` -> `mode=auto` Contract; the contract wins on any conflict.
 
-## Containerization
+- **Runs without asking:** reading the project; creating new deployment files that do not exist yet (Dockerfile, `.dockerignore`, compose files, K8s manifests, Helm values, runbook); memory updates; local validation (`docker build`, `docker compose config`, linters, `helm template`, `kubeconform`); `docker compose up --wait` only when every service it starts is a local container.
+- **Always Ask First (also in mode=auto):** creating or editing CI/CD config (`.github/workflows/*`, `.gitlab-ci.yml`, other pipeline files); creating or editing `.env*` or secret files; overwriting or editing any existing deployment file (show a diff instead of replacing it); `docker push`; any deploy (`kubectl apply/rollout/scale/delete`, `helm install/upgrade/rollback/uninstall`, `terraform`/`tofu`/`pulumi` apply or destroy, `fly deploy`, `vercel --prod`, `gcloud ... deploy`, `aws ... deploy`, `serverless deploy`); applying migrations (only through backend-migrate or the pipeline step the user approved); `kubectl ... --dry-run=server`, which talks to a cluster.
+- When asking, show the exact command, the resolved target (cluster context, registry, environment, account), whether it is production per Production Targets, and the expected effect.
 
-### Dockerfile Template
+## Workflow
 
-```dockerfile
-# syntax=docker/dockerfile:1
-FROM node:20-alpine AS build
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci
-COPY . .
-RUN npm run build && npm ci --only=production
+### 1. Detect stack, target and existing artifacts
 
-FROM node:20-alpine AS runtime
-WORKDIR /app
-ENV NODE_ENV=production
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/dist ./dist
-COPY package.json ./
-EXPOSE 3000
-USER node
-CMD ["node", "dist/main.js"]
+- Follow `<shared>/context-loading.md` -> Standard Prerequisites for the manifest and stack. Any manifest it lists is valid. If no Dockerfile template here fits the stack (Rust, Ruby, PHP, .NET, Elixir), use the general rules in [references/dockerfiles.md](references/dockerfiles.md) and the ecosystem's official image; do not stop.
+- From the manifest and code, derive: build command, start command, listening port, runtime version (`.nvmrc`, `engines`, `.python-version`, `go.mod`, `pom.xml`/`build.gradle` toolchain), health routes, migration tool and command, and backing services (database, cache, queue).
+- Find existing artifacts: `Dockerfile*`, `.dockerignore`, `docker-compose*.yml`, `compose*.yaml`, `.github/workflows/*`, `.gitlab-ci.yml`, `k8s/`, `deploy/`, `charts/`, `helm/`, `kustomization.yaml`, `*.tf`, `Pulumi.yaml`, `fly.toml`, `render.yaml`, `app.yaml`, `vercel.json`, `serverless.yml`, `template.yaml` (SAM), `Procfile`. Read every one you find.
+- Read `deployment.md` -> `## Migration Phases` (written by backend-migrate). Note any open entry and its next phase.
+
+Output: a short inventory (stack facts, existing artifacts, open migration phases, gaps). In a monorepo, ask which service to target unless the request makes it clear.
+
+### 2. Choose the strategy
+
+| Situation | Target |
+|---|---|
+| Small team, no ops capacity, one or two services, standard web workload | PaaS (Fly.io, Render, Railway, Heroku, Cloud Run, App Runner, Azure Container Apps) |
+| Predictable traffic, a few services, one or two hosts, team can run Docker | Containers on a VM (compose or systemd plus a reverse proxy) |
+| Three or more independently deployed services, autoscaling, team or managed offering can run a cluster | Kubernetes (managed: EKS, GKE, AKS) with plain manifests, Kustomize or Helm |
+| Spiky or event-driven work, short requests, can accept cold starts and per-request DB limits | Serverless functions (Lambda, Cloud Functions, Azure Functions) |
+
+If `deployment.md`, `decisions.md` or existing artifacts already name a target, keep it unless the user asks to change. If the choice is unclear, present the two best options with trade-offs and ask. Platform notes, serverless caveats and IaC boundaries are in [references/platforms.md](references/platforms.md).
+
+Output: the chosen target and release strategy (default: rolling with readiness gates; see step 5).
+
+### 3. Plan files and start a checkpoint
+
+List every file you will create or change, with its path (see Outputs). For an existing file, plan a diff, not a rewrite.
+
+Start a checkpoint before the first edit:
+
+```bash
+node <shared>/scripts/checkpoint.js start --skill backend-deploy --feature <slug>
 ```
 
-### Dockerfile Rules
+Use a slug such as `deploy-setup` or `k8s-migration`. Record each file you create or edit (`checkpoint.js record --skill backend-deploy --feature <slug> --created a,b --modified c,d`, plus `--memory <file>` for memory updates and `--done <step>` per finished step), run `checkpoint.js snapshot` after each step, and `checkpoint.js close` when done. If `start` exits with code 3, an open checkpoint exists: offer to resume it or restart with `--restart`. If Node is unavailable, follow `<shared>/tool-rules.md` -> Concurrent & Partial Work by hand.
 
-- Use multi-stage builds with pinned base image versions
-- Run as a non-root user; install only production deps in the final stage
-- Respect `.dockerignore` and copy only required files per stage
-- Expose the application port explicitly
+### 4. Generate artifacts
 
-### .dockerignore Template
+Generate only what the target needs, using the project's real commands, port, versions and health routes. Never invent script names: take them from the manifest.
 
-```text
-node_modules
-.git
-.env*
-!.env.example
-dist
-Dockerfile
-docker-compose*.yml
-*.md
+- **Dockerfile and `.dockerignore`**: multi-stage, non-root numeric UID, exec-form start command, runtime version from the project, no secrets in layers. [references/dockerfiles.md](references/dockerfiles.md).
+- **Local compose**: app plus backing services with healthchecks, per-service env, service DNS names, and `.env.example` with empty secret values. [references/local-compose.md](references/local-compose.md).
+- **CI/CD pipeline**: validate on pull requests; on the main branch build once, tag with the commit SHA, push, run the gated migration job, deploy, verify. [references/ci-pipelines.md](references/ci-pipelines.md).
+- **Kubernetes or Helm** (only when targeted): Deployment with probes, resources and securityContext, Service, PDB, HPA, ConfigMap and Secret references, migration Job. [references/kubernetes.md](references/kubernetes.md).
+- **Health and shutdown**: confirm the app exposes liveness and readiness routes and drains on SIGTERM. Use existing routes if present; otherwise default to `/healthz` and `/readyz` (as in `<shared>/stacks/`). If code changes are needed, hand them to backend-ops or apply the stack file's snippet. [references/health-shutdown.md](references/health-shutdown.md).
+
+**Migration step (required when the service has a database):**
+
+- Migrations run once per release as a separate job: a CI job, a Kubernetes Job, or a Helm `pre-upgrade` hook. Never in the container start command and never on every replica at startup.
+- Order: expand migrations (`pre-deploy`) -> app rollout -> verify. Contract migrations (`post-deploy`) never run in the same pipeline run as the deploy; they run in a later release, from a manually triggered job, after backend-migrate's Contract Gate passes.
+- The job is gated: production runs require an approval (protected environment, manual job) and a single concurrency group so two runs never migrate at once.
+- backend-deploy wires the step and the command; backend-migrate writes and labels the migrations. If a migration has no kind and timing label, hand it back to backend-migrate.
+
+### 5. Validate locally
+
+Run what is available; report each check as passed, failed, or "not run" with the reason (tool missing, needs a cluster). Never report an unrun check as passed.
+
+| Artifact | Checks |
+|---|---|
+| Dockerfile | `docker build -t <app>:local .`; `hadolint Dockerfile` if installed |
+| Compose | `docker compose config -q`; `docker compose up -d --wait` then hit the readiness route, then `docker compose down` (never `down -v` without asking) |
+| GitHub Actions | `actionlint` if installed; otherwise check YAML syntax and that every referenced script exists |
+| GitLab CI | YAML syntax and referenced scripts; `glab ci lint` talks to the GitLab API, so ask first |
+| Kubernetes | `kubeconform -strict -summary <dir>` if installed; `kustomize build` if used |
+| Helm | `helm lint <chart>`; `helm template <release> <chart> -f <values>` piped to `kubeconform` |
+
+Fix failures in files this run created. For a failure in a pre-existing file, report it and propose a diff.
+
+### 6. Write the release plan and runbook
+
+Using [references/release-rollback.md](references/release-rollback.md), decide and write down:
+
+- **Strategy**: rolling (default), blue-green, or canary, with the reason.
+- **Migration order** for this release, from `## Migration Phases`.
+- **Rollback**: app rollback by redeploying the previous image SHA. Expand migrations stay. Never roll the app back past an expand, or run a down migration, without checking that the older code works with the current schema.
+- **Post-deploy verification**: readiness of all new instances, smoke tests against the deployed URL, then a watch window on error rate, latency and saturation against the pre-deploy baseline, with rollback triggers.
+
+Write `docs/runbooks/deploy.md` from the template in that reference.
+
+### 7. Record memory and decisions
+
+- Write or update `.opencode/everything-backend-memory/deployment.md` with the sections below. Update only the sections you own; keep `## Migration Phases` (backend-migrate) and `## Backup and DR` / `## Runbooks` (backend-ops) as they are.
+- Append a `decisions.md` entry when you chose or changed the platform or release strategy (format in `<shared>/memory-schema.md`).
+- Record the memory files in the checkpoint, snapshot, and close it with `--status completed`.
+
+`deployment.md` sections owned by this skill:
+
+```markdown
+# Deployment
+## Targets          (environment -> platform, region or cluster, URL, approval required)
+## Artifacts        (path of each generated file)
+## Pipeline         (CI system, file, jobs and order, triggers, image registry and tag scheme)
+## Migration Step   (tool, command, where it runs, lock or concurrency control, approval gate)
+## Release Strategy (rolling, blue-green or canary, and why)
+## Health Probes    (liveness and readiness routes, ports, timings, shutdown grace period)
+## Rollback         (app rollback command, migration compatibility rule)
+## Post-Deploy Verification (smoke tests, watch window, rollback triggers)
+## Config and Secrets (env var names and where each secret lives, how it reaches the runtime; never values)
+## Last Updated
 ```
 
-## Local Orchestration
+### 8. Report
 
-### docker-compose.yml Template
+Summarize: target and strategy, files created and changed, validation results (passed, failed, not run), open migration phases, and the commands left for the user (push, first deploy, secret setup), each marked as needing approval.
 
-```yaml
-version: "3.8"
-services:
-  app:
-    build: .
-    ports: ["3000:3000"]
-    env_file: .env
-    depends_on:
-      db:
-        condition: service_healthy
-      cache:
-        condition: service_started
-  db:
-    image: postgres:16-alpine
-    env_file: .env
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-  cache:
-    image: redis:7-alpine
-volumes:
-  postgres_data:
-```
+**Done when:** every generated file is at its stated path; every validation check is reported as passed, failed or not run with a reason; the pipeline has an explicit gated migration step (if there is a database) and a deploy and verify stage; `docs/runbooks/deploy.md` and `deployment.md` are written; any platform decision is in `decisions.md`; no push, deploy or apply ran without approval; and the checkpoint is closed.
 
-### Local Orchestration Rules
+## Running a Release
 
-- Use `depends_on` with healthchecks for DB-backed startup ordering
-- Keep secrets out of compose files; load from `.env`
-- Provide `docker-compose.override.yml` for local-only overrides
+Only when the user asks to deploy now. Each step that changes a remote system is Always Ask First.
 
-## CI/CD Pipeline
+1. Read `deployment.md` and the runbook. Confirm the target environment, image SHA and the previous SHA for rollback.
+2. Check `## Migration Phases`: if this release includes expand migrations, run them through the approved pipeline job or hand off to backend-migrate to apply them. Stop if any contract migration is pending for this run.
+3. Trigger the deploy through the pipeline when one exists (preferred) or with the recorded command after approval.
+4. Run post-deploy verification. If a rollback trigger fires, propose the app rollback from the runbook and ask.
+5. Update `deployment.md` (last deployed SHA and date) and report.
 
-### GitHub Actions Template
+## Outputs
 
-```yaml
-name: CI/CD
-on:
-  push:
-    branches: [main]
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-      - run: npm ci
-      - run: npm run lint
-      - run: npm run test:ci
-      - run: npm run build
-  build-and-push:
-    needs: test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: ghcr.io/${{ github.repository }}:${{ github.sha }}
-```
+| Output | Path |
+|---|---|
+| Container image definition | `Dockerfile` (or `<service>/Dockerfile` in a monorepo), `.dockerignore` |
+| Local stack | `compose.yaml` (or the existing `docker-compose.yml`), `compose.override.yaml` for local-only overrides, `.env.example` |
+| CI/CD | `.github/workflows/ci.yml` and `.github/workflows/deploy.yml`, or `.gitlab-ci.yml` |
+| Kubernetes | `deploy/k8s/` (base manifests) or `deploy/helm/<app>/values-<env>.yaml` for an existing chart |
+| Runbook | `docs/runbooks/deploy.md` |
+| Deployment memory | `.opencode/everything-backend-memory/deployment.md` |
+| Decision record | `.opencode/everything-backend-memory/decisions.md` |
 
-### GitLab CI Template
+Keep existing paths and file names when the project already has them.
 
-```yaml
-stages: [test, build]
-test:
-  image: node:20-alpine
-  script:
-    - npm ci
-    - npm run lint
-    - npm run test:ci
-build:
-  stage: build
-  image: docker:24
-  services: [docker:24-dind]
-  script:
-    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
-    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
-  only: [main]
-```
+## Rollback of This Run
 
-### CI/CD Rules
+`checkpoint.js rollback --skill backend-deploy --feature <slug>` reverts files this run edited; created files are deleted only with `--delete-created` after the user confirms (`<shared>/tool-rules.md` -> Rollback). It does not undo a push, deploy or migration that already ran; use the release rollback in the runbook for those.
 
-- Run lint, tests, and build before creating artifacts
-- Build images only after tests pass; tag with commit SHA
-- Use registry caching; keep deployment credentials in CI secrets
-- New Dockerfile, `.dockerignore`, and compose files are this skill's output and may be written. Creating or editing CI/CD config (`.github/workflows/*`, `.gitlab-ci.yml`) or `.env*` files, pushing images, deploying, applying IaC, rotating secrets, and overwriting any existing file this run did not create (Dockerfile, compose, `.dockerignore`, manifests, pipelines) always ask first, even in `mode=auto` (see `_shared/tool-rules.md` → Always Ask First). For an existing artifact, show a diff/patch for approval instead of replacing it
+## Handoffs
 
-## Health Checks
+- **backend-migrate**: writes, labels and applies migrations; owns `## Migration Phases`.
+- **backend-ops**: health endpoint code, graceful shutdown, resilience, observability, SLO alerts, backups and DR.
+- **backend-security**: image and dependency scanning policy, secret management review, supply chain.
+- **backend-doctor**: verifies the running service after changes.
 
-### Required Endpoints
+## References
 
-- `GET /health/live` - liveness; cheap 200 when the process is running
-- `GET /health/ready` - readiness; 200 only when dependencies are healthy
-
-### Readiness + Shutdown Template
-
-```typescript
-app.get('/health/ready', async (req, res) => {
-  const checks = await Promise.all([db.ping(), cache.ping()]);
-  const ok = checks.every(c => c.ok);
-  res.status(ok ? 200 : 503).json({
-    status: ok ? 'ready' : 'not_ready',
-    checks,
-  });
-});
-
-const server = app.listen(port);
-const shutdown = (signal: string) => {
-  server.close(() => {
-    Promise.all([db.disconnect(), cache.disconnect()])
-      .then(() => process.exit(0))
-      .catch(() => process.exit(1));
-  });
-};
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
-```
-
-### Health Check Rules
-
-- Liveness must be cheap; readiness may check dependencies
-- Return 503 from readiness if required downstream services are unreachable
-- Stop accepting new connections before closing DB connections
-
-## Environment Promotion
-
-Use three configuration layers: base config in the repo, runtime values from secrets managers or CI variables, and per-environment overrides only when necessary.
-
-### .env.example Template
-
-```text
-NODE_ENV=development
-PORT=3000
-DATABASE_URL=postgresql://user:pass@localhost:5432/app
-REDIS_URL=redis://localhost:6379
-JWT_SECRET=replace-in-production
-LOG_LEVEL=info
-```
-
-### Promotion Rules
-
-- Build the container image once; promote the same image across environments
-- Keep environment-specific values out of the container image
-- Inject secrets via Docker secrets, Kubernetes secrets, or CI secret variables
-- Require manual approval or branch protection for production deploys
-
-## Decision Trees
-
-### Containers vs Serverless vs PaaS
-
-| Scenario | Recommendation |
-|----------|----------------|
-| Predictable traffic, long-running HTTP | Containers (Docker / K8s) |
-| Sporadic or event-driven workloads | Serverless functions |
-| Small team, no ops capacity | Managed PaaS |
-| Multi-service with shared resources | Containers on a host or managed K8s |
-| Strict latency and scaling requirements | Containers with autoscaling |
-
-### When to Add Kubernetes
-
-- 3+ independently deployable services
-- Need automated rollouts, rollbacks, and health-based restarts
-- Require horizontal pod autoscaling or resource quotas
-- Team can handle the operational complexity or uses a managed offering
+- [references/dockerfiles.md](references/dockerfiles.md): read when writing or fixing a Dockerfile or `.dockerignore`; Node, Python, Go and Java templates and general rules for other stacks.
+- [references/local-compose.md](references/local-compose.md): read when writing compose files or `.env.example`, or running the stack locally.
+- [references/ci-pipelines.md](references/ci-pipelines.md): read when writing GitHub Actions or GitLab CI, the migration job, deploy jobs, environment promotion or supply-chain steps.
+- [references/kubernetes.md](references/kubernetes.md): read when the target is Kubernetes, Kustomize or Helm.
+- [references/release-rollback.md](references/release-rollback.md): read when choosing a release strategy, planning rollback or post-deploy checks, or writing `docs/runbooks/deploy.md`.
+- [references/platforms.md](references/platforms.md): read when choosing a target, deploying to a PaaS, VM or serverless, or when the user asks about infrastructure as code.
+- [references/health-shutdown.md](references/health-shutdown.md): read when the service lacks health routes or graceful shutdown, or probes fail.

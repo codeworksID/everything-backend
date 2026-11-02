@@ -1,272 +1,136 @@
 ---
 name: backend-scan
-description: "Scan a backend project to learn its current state and keep memory files in sync. Use this skill when the user says 'explore', 'understand', 'what's here', 'scan', 'refresh memory', 'update memory', or 'sync memory'. Runs with scope=initial for first discovery or scope=sync for drift detection; it is read-only apart from memory files."
+description: "Scans an existing backend codebase read-only and creates or refreshes the project memory files (structure, tech stack, API patterns, database schema, decisions, issues) that the other backend skills rely on. Use it when the user asks to scan, explore or map this backend project, asks what stack, framework or structure the backend uses, or says refresh, sync or update the backend memory. Other backend skills run it first when the memory folder is missing or stale. Supports scope=initial for first discovery and scope=sync for drift detection. It never installs, builds, tests, migrates or runs the app, and it does not grade code quality; that is backend-doctor and backend-security."
 ---
 
 # Backend Scan
 
-Two-in-one skill for understanding a backend codebase and keeping that understanding up to date.
+Learn what a backend project is made of and record it in project memory. Scan is read-only apart from its memory files.
 
-## When to Activate
+## When to Use
 
-- User wants to explore or understand an existing backend project
-- User starts work on an unfamiliar codebase
-- User says "explore", "understand", "what's here", "scan", "analyze this project"
-- User says "refresh memory", "update memory", "sync memory"
-- After major code changes or periodically to keep memory current
+- The user wants to explore, map or summarize an existing backend project.
+- Another backend skill found the memory folder missing, incomplete or stale.
+- The user says "refresh memory", "sync memory" or "update memory", or a large change just landed.
 
-## Prerequisites
+Not for: grading code quality or security (backend-doctor, backend-security), or answering a single question about one file (just read the file).
 
-See `_shared/context-loading.md` for standard prerequisites (project root check, manifest detection, memory file presence, staleness check, fallback rules, and context priority list). Use the OpenCode-native `glob`/`read` checks described there for cross-platform compatibility.
+## Before You Start
 
-Skill-specific prerequisites:
+1. Resolve the shared docs folder ("<shared>"): first `_shared/` inside this skill's folder (bundled installs, e.g. Claude.ai), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
+2. Read `<shared>/tool-rules.md` (mode=auto contract, checkpoints) and `<shared>/host-tools.md` if the actions below don't map clearly to your host's tools. Read `<shared>/memory-schema.md`: it defines every memory file you write.
+3. Load project memory per `<shared>/context-loading.md`. Missing memory is normal for this skill: it is the skill that creates it. Do not call backend-scan from here.
+4. If the detected stack matches a file in `<shared>/stacks/`, read it.
 
-- REQUIRED: At least one manifest or source directory exists.
-  - If missing: stop and ask the user for the correct project path that contains a known manifest or source directory.
-- RECOMMENDED: `git` is available for staleness detection and drift comparison.
-  - If missing: proceed with filesystem-only drift detection and note in the summary that git-based staleness checks were skipped.
+Skill-specific checks:
 
-If any REQUIRED check fails, run `backend-scan` with `mode=auto`, then re-run these checks. If the missing file is a project file (e.g., manifest, source dir) that `backend-scan` cannot create, stop and ask the user.
+- REQUIRED: at least one manifest or source directory exists. If not, stop and ask the user for the project path. Scan cannot create project files.
+- RECOMMENDED: git is available. Without it, use filesystem-only drift detection and say in the summary that git-based staleness checks were skipped.
+- If any memory file contains merge-conflict markers (`<<<<<<<`, `=======`, `>>>>>>>` at line start), stop and ask the user to resolve them. Never ingest conflict markers as facts.
 
-## Required Context
+## Inputs
 
-Load context in this priority order:
+- `scope=initial | sync` (optional): what to scan. If the caller omits it, choose per memory file (Step 1).
+- Run mode: `mode=auto` or `mode=interactive`, exactly as defined in `<shared>/tool-rules.md` -> `mode=auto` Contract. Scan does not redefine it.
+- Compatibility: a caller that passes `mode=initial` or `mode=sync` means `scope=initial` or `scope=sync`. The run mode is then inherited from the caller, else `mode=auto`.
+- `path=<dir>` (optional): the service to scan inside a monorepo.
 
-- For `scope=initial`: only the project root path is required; no memory files need to exist yet.
-- For `scope=sync`: load existing memory files in priority order:
-  1. `project-overview.md`
-  2. `tech-stack.md`
-  3. `api-patterns.md`
-  4. `db-schema.md`
-  5. `decisions.md`
-  6. `issues.md`
+## Read-Only Rule
 
-If memory files are stale or incomplete, run `backend-scan` in `scope=sync` first.
+- Allowed: find files, read files, search file contents, check LSP symbols or diagnostics if available, and read-only git (`git status`, `log`, `diff`, `show`, `rev-parse`).
+- The only files scan writes are in `.opencode/everything-backend-memory/` (memory files, their archive and checkpoint files).
+- Never install dependencies, run builds, tests, migrations, `docker compose`, the application, or any project script (package scripts and install hooks execute repository code).
+- Use LSP only if the language server is already running or does not execute build scripts. Some servers run repository code on project import (rust-analyzer runs `build.rs` and proc macros; Java/Kotlin servers evaluate Gradle or Maven files). That counts as running project code.
+- If a fact can only be learned by running something, record it as `unknown` and name the skill that can find out (for example backend-test or backend-doctor). Running it needs the user's confirmation, in `mode=auto` too.
 
-## Process
+Under the shared contract, scan's reads and memory writes run without asking. Everything else is outside scan's scope.
 
-Set `scope=initial` for the first scan of a project (creates memory files). Set `scope=sync` to detect drift from existing memory files and update them. `scope` says what to scan; it is separate from the run mode (`mode=auto` / `mode=interactive`). For compatibility, a caller that passes `mode=initial` or `mode=sync` means `scope=initial` or `scope=sync`; the run mode is then inherited from the caller's run mode, else `mode=auto`.
+## Workflow
 
-### Step 0: Tool Usage Rules
+### Step 1: Pick scope and check memory state
 
-Use OpenCode tools directly during every scan.
+1. List the files in `.opencode/everything-backend-memory/`.
+2. Decide per file, not all-or-nothing:
+   - A memory file that does not exist: initialize it (initial behavior), even during a sync.
+   - A file that exists but has no `## Last Updated`: treat it as stale.
+   - Otherwise: sync behavior.
+3. In sync, check staleness for each existing file. Compare its `## Last Updated` with the last first-parent commit that touched the paths it describes:
+   `git log --first-parent -1 --format=%ct -- <paths>`
+   `--first-parent` makes merge commits count; without it, a merged feature branch can report the feature commit's older date. If the file records a source SHA, prefer `git diff --quiet <sha> HEAD -- <paths>` (exit 1 means changed).
+4. Start a checkpoint before the first memory write:
+   `node <shared>/scripts/checkpoint.js start --skill backend-scan --feature <scope>-scan`
+   Use `initial-scan` if any core memory file is missing, else `sync-scan`, and keep the same slug for every later checkpoint call in this run. If it exits 3, an open scan checkpoint exists: offer to resume or restart (`--restart`). If Node is unavailable, follow `<shared>/tool-rules.md` -> Concurrent & Partial Work by hand.
 
-See `_shared/tool-rules.md` for the canonical tool-usage rules.
+Output: the scope per memory file and the list of stale files. Done when every one of the 6 core memory files has a decided action (create, sync, or up to date).
 
-**Read-only rule**: scan only reads the project. Use `glob`, `read`, `grep`, `lsp_*`, and read-only git (`git status`, `log`, `diff`, `show`). The only files scan writes are its memory files in `.opencode/everything-backend-memory/` (and their checkpoint and archive files).
+### Step 2: Map the project
 
-- Use `lsp_*` only when the language server is already running or does not execute build scripts. Project import in some servers runs repository code (rust-analyzer runs `build.rs` and proc macros by default; the Java/Kotlin servers evaluate Gradle or Maven build files); that counts as running project code and falls under the confirmation rule below.
-- Never install dependencies, run builds, tests, migrations, `docker compose`, or the application, and never run project scripts (package scripts and install hooks execute repository code).
-- If a fact can only be learned by running something, record it as unknown in memory and suggest the owning skill (e.g. `backend-test`, `backend-doctor`). Running it needs the user's confirmation, in `mode=auto` too.
+1. Detect workspaces first (pnpm-workspace.yaml, `workspaces` in package.json, turbo.json, nx.json, go.work, Cargo workspace, multi-project Gradle or Maven, several service folders each with a manifest). If there are several backend services and no `path=` was given, list them and ask which to scan. Note frontends and other apps without scanning them.
+2. Find manifests and lockfiles, then detect language, package manager, frameworks, ORM, database, migrations tool, auth, cache, queues and test runner. Use `references/stack-detection.md`.
+3. Map the directory structure and entry points. Skip vendored, generated and build output (exclusion list in `references/stack-detection.md`). Mark generated code as generated.
+4. Extract the facts the memory schema requires: tables and relationships, endpoints and base path, auth method, error shape, conventions, existing ADRs. Use the extraction recipes in `references/stack-detection.md`. Keep a source path (file:line where practical) for each fact.
+5. Identify the architecture style (MVC, layered, clean, hexagonal, modular monolith, microservices). If unclear, record `undetermined`.
+6. Note conventions and notable observations without grading them. They go to `## Notable Conventions` in project-overview.md and to the summary's Key Findings. Do not assign severities: grading is backend-doctor's and backend-security's job (see `<shared>/principles.md` for the vocabulary).
 
-### Step 1: Scan Project State
+Budget: on large repos, read representative files per layer rather than everything. Say in the summary what was sampled.
 
-In both scopes (`initial` and `sync`), start by scanning the project:
+Done when each required section of each memory file has either a value with a source or an explicit `unknown`.
 
-- Detect language/package manager:
-  - **Node.js**: `package.json`, `tsconfig.json`, `yarn.lock`, `pnpm-lock.yaml`
-  - **Python**: `requirements.txt`, `pyproject.toml`, `Pipfile`, `setup.py`
-  - **Go**: `go.mod`, `go.sum`
-  - **Java**: `pom.xml`, `build.gradle`, `build.gradle.kts`
-  - **Rust**: `Cargo.toml`
-  - **Ruby**: `Gemfile`
-- Map directory structure:
-  - `src/`, `lib/`, `app/`, `internal/`, `cmd/`
-  - `controllers/`, `handlers/`, `routes/`, `api/`
-  - `models/`, `entities/`, `schemas/`
-  - `services/`, `repositories/`, `daos/`
-  - `middleware/`, `guards/`, `interceptors/`
-  - `config/`, `settings/`, `utils/`, `helpers/`
-- Detect frameworks, databases, ORMs/ODMs, auth, cache, queues, search, testing
-- Identify architecture patterns: MVC, Clean Architecture, Hexagonal, Layered
-- Note principle-level concerns (see `_shared/principles.md` for details):
-  - **Database**: normalization, referential integrity, indexes, transaction boundaries
-  - **Code/Architecture**: SOLID, DRY, separation of concerns, dependency injection, loose coupling
-  - **API**: REST conventions, idempotency, versioning, validation, error handling, auth/authz, pagination, rate limiting
-  - **System**: scalability, caching, queues, observability, event-driven/CQRS patterns
-  - **Security**: least privilege, input sanitization, secure defaults, audit logging, encryption
+### Step 3: Compare with memory (sync files only)
 
-### Step 2: Scope Split
+1. Read the current memory file and compare it with the live facts (see `<shared>/memory-schema.md` -> Conflict detection algorithm).
+2. Classify each difference:
+   - **New**: in code, not in memory -> add.
+   - **Modified**: in both, different -> update. Live code wins.
+   - **Missing from code**: in memory, not in code. If the entry is marked Planned or was written by a design skill (backend-db-design, backend-api-design, backend-architect, backend-auth) and was never seen in code, leave it and list it as "planned, not yet implemented". Otherwise mark it `[DEPRECATED]`. Never remove an entry.
+   - **Conflict**: memory and code disagree in a way that is not mechanical (for example a renamed table that could also be a new one, or a decision that the code contradicts). Do not auto-resolve.
+3. If nothing differs, the file is up to date: refresh nothing and report "up to date".
 
-#### mode=auto
+Output: a change list per file. Done when every difference is classified.
 
-Follow the shared `mode=auto` contract in `_shared/tool-rules.md`; this section adds only scan-specific choices and does not redefine it. Under that contract, scan's reads and its memory-file writes run without asking; everything else is excluded by the Read-only rule above.
+### Step 4: Write memory
 
-Scan-specific choices:
+1. In `mode=auto`, write new files and apply New, Modified and Missing-from-code updates without asking. Pause only for conflicts: apply everything else, then ask about the conflicts. In `mode=interactive`, show the planned memory diff and wait for approval before any write.
+2. Use the entry format each file's schema defines (`<shared>/memory-schema.md`). Templates are in `references/output-templates.md`:
+   - Inventory files (project-overview, tech-stack, api-patterns, db-schema): a timestamped `Initial Scan` or `Sync Update` entry.
+   - decisions.md: one entry per decision with Context, Decision, Consequences, Status. Decisions inferred from code get `Status: Proposed` and the note "Inferred by backend-scan from code; confirm with the team". Never mark an inferred decision Accepted.
+   - issues.md: only facts scan can see without grading (for example TODO/FIXME markers). Aggregate TODOs into one issue per module with a count and sample locations, Severity Low, Status Open. Before adding, check issues.md for an existing entry on the same location; update it instead of duplicating.
+3. Preserve existing content: append, don't overwrite. Refresh `## Last Updated` only on files you changed. If git is available, record the current `git rev-parse HEAD` in the entry as `Source SHA:`.
+4. Record each memory file you wrote: `node <shared>/scripts/checkpoint.js record --skill backend-scan --feature <scope>-scan --memory <file>`.
+5. Compact per `<shared>/memory-schema.md` -> Compaction rule and Memory file size guard. Protected entries (latest current-state entry, Open or In Progress issues, Accepted non-superseded decisions, Proposed decisions) are never archived. Archive names never overwrite an existing archive.
 
-1. Select the scope when the caller did not pass one:
-   - Use `scope=initial` if no memory files exist in `.opencode/everything-backend-memory/`.
-   - Use `scope=sync` if memory files already exist.
-2. In `scope=sync`, apply New and Modified updates without asking. Deleted items are only marked deprecated (scan never removes entries). Pause only on conflicts (see Edge Cases).
-3. Present the discovery summary or change summary at the end.
+Done when every planned write is applied or explicitly deferred as a conflict.
 
-In `mode=interactive`, show the discovery or change summary with the planned memory diff and wait for approval before writing.
+### Step 5: Verify and report
 
-#### scope=initial
+1. Re-read each memory file you wrote. Check that every required section from `<shared>/memory-schema.md` is present, and that no conflict markers or template placeholders remain.
+2. Close the checkpoint: `node <shared>/scripts/checkpoint.js close --skill backend-scan --feature <scope>-scan --status completed` (use `--status abandoned` if the user stops the run).
+3. Report with the Discovery Summary (initial) or Change Summary (sync) from `references/output-templates.md`. Fill the per-file status from what actually happened: created, updated, up to date, partial (list missing sections), or failed (with the reason). Never pre-fill success.
 
-If no memory files exist, treat this as first discovery:
+## Exit Criteria
 
-1. Create memory files in `.opencode/everything-backend-memory/`:
-   - `project-overview.md` — project type, purpose, structure
-   - `tech-stack.md` — languages, frameworks, databases, ORMs, auth, testing
-   - `api-patterns.md` — API protocol, auth method, conventions
-   - `db-schema.md` — database type, tables/collections discovered
-   - `decisions.md` — key architecture decisions (if any are obvious)
-   - `issues.md` — known issues and TODOs (if found)
-2. Preserve any existing content by appending rather than overwriting.
-3. Present the discovery summary at the end. In `mode=auto`, do not ask before writing; in `mode=interactive`, show the planned memory files and wait for approval (see above).
-
-#### scope=sync
-
-If memory files already exist, treat this as drift detection:
-
-1. Check staleness for each memory file:
-   - Read the `Last Updated` timestamp from the file.
-   - Compare it against the latest `git` commit timestamp for the source files relevant to that memory file.
-   - If the commit timestamp is newer than the memory timestamp, mark the file as stale.
-2. If any file is stale, run drift detection and build a diff summary of the planned updates.
-3. Read current memory files in `.opencode/everything-backend-memory/`:
-   - `project-overview.md`, `tech-stack.md`, `api-patterns.md`, `db-schema.md`, `decisions.md`, `issues.md`
-4. Compare the live project state against memory.
-5. Classify changes:
-   - **New** routes/models/dependencies/configs → add to memory
-   - **Modified** routes/schema/dependencies/configs → update memory
-   - **Deleted** items → mark as deprecated in memory; never remove the entry
-6. Generate a change summary. In `mode=auto`, apply it unless it contains conflicts; on conflicts, apply the non-conflicting updates and ask about the rest. In `mode=interactive`, ask before applying any update.
-7. Update affected files with timestamped entries and refresh "Last Updated" timestamps.
-
-### Step 3: Update Memory Files
+The run is complete when all of these hold:
 
-Memory files live in `.opencode/everything-backend-memory/`:
+- Each of the 6 core memory files (project-overview, tech-stack, api-patterns, db-schema, decisions, issues) exists and has its required sections, or the summary reports it as partial with the missing sections named.
+- Every unknown fact is written as `unknown` with the skill that can resolve it.
+- Conflicts are listed for the user, not silently resolved.
+- No command other than read-only inspection ran, and no file outside the memory folder changed.
+- The summary reports per-file status, what was sampled or skipped, and whether git staleness checks ran.
 
-- `project-overview.md` — type, purpose, structure
-- `tech-stack.md` — languages, frameworks, databases, ORMs, auth, testing
-- `api-patterns.md` — API protocol, auth, conventions
-- `db-schema.md` — database type, tables/collections
-- `decisions.md` — architecture decisions
-- `issues.md` — known issues and TODOs
-
-See `_shared/memory-schema.md` for the canonical schema of each memory file, including required sections, optional sections, update rules, and example entries.
-
-Update rules:
-
-- Preserve existing content.
-- Append new discoveries with timestamps.
-- Mark deprecated items clearly.
-- Update the "Last Updated" timestamp.
-
-### Compaction
-
-After appending a new timestamped entry to a memory file, compact it as defined in `_shared/memory-schema.md` → Compaction rule. Compaction applies only to timestamped history entries: the latest current-state entry of each file, issues that are Open or In Progress, and Accepted decisions that are not superseded are never archived. Archive filenames must not collide with existing archives.
-
-Update entry format:
-
-```markdown
-## [YYYY-MM-DD HH:MM] [Initial Scan | Sync Update]
-
-### Added/Updated
-- [What changed]
-- Source: [File path]
-```
-
-## Decision Trees
-
-### If `package.json` found
-- Check `dependencies` for: `express`, `fastify`, `@nestjs/core`, `koa`
-- Check `devDependencies` for: `typescript`, `jest`, `eslint`
-- Check `scripts` for: `start`, `dev`, `build`, `test`
-- Read `tsconfig.json` for TypeScript configuration
-
-### If `requirements.txt` or `pyproject.toml` found
-- Check for: `django`, `fastapi`, `flask`
-- Check for: `sqlalchemy`, `alembic`, `psycopg2`
-- Check for: `pytest`, `unittest`
-- Look for `manage.py` (Django) or `main.py` (FastAPI)
-
-### If `go.mod` found
-- Check for: `gin-gonic/gin`, `labstack/echo`, `gofiber/fiber`
-- Check for: `gorm.io/gorm`, `jmoiron/sqlx`
-- Check for: `stretchr/testify`
-- Look for `cmd/` directory for entry points
-
-### If `pom.xml` or `build.gradle` found
-- Check for: `spring-boot-starter-web`, `quarkus`
-- Check for: `hibernate`, `spring-data-jpa`
-- Check for: `junit`, `testng`
-- Look for `src/main/java` and `src/test/java`
-
-## Templates
-
-### Discovery Summary (scope=initial)
-
-```markdown
-# Project Discovery Summary
-
-## Project Type
-[Web API / Microservice / Monolith / CLI / Worker]
-
-## Tech Stack
-- **Language**: [Detected]
-- **Framework**: [Detected]
-- **Database**: [Detected]
-- **ORM**: [Detected]
-
-## Architecture
-[Pattern detected]
-
-## Key Findings
-- [Important observation 1]
-- [Important observation 2]
-
-## Memory Updated
-- ✅ project-overview.md
-- ✅ tech-stack.md
-- ✅ api-patterns.md
-- ✅ db-schema.md
-```
-
-### Change Summary (scope=sync)
-
-```markdown
-# Memory Sync Summary
-
-**Date**: [ISO timestamp]
-**Project**: [Project name]
-
-## Changes Detected
-
-### Added
-- [NEW] file1.ts → [Description]
-
-### Modified
-- [MODIFIED] schema.prisma → [What changed]
-
-### Deleted
-- [DELETED] old-route.ts → [What was removed]
-
-## Updates to Apply
-- `api-patterns.md`: [List]
-- `db-schema.md`: [List]
-- `tech-stack.md`: [List]
-- `project-overview.md`: [List]
-
-## Conflicts
-- [None / List conflicts]
-
-## Recommended Action
-[Update all / Update specific files / Resolve conflicts first]
-```
+test-strategy.md (owner backend-test) and deployment.md (owner backend-deploy) are not scan outputs. Scan may note facts for them in the summary, but it does not create them.
 
 ## Edge Cases
 
-- **No package manager files found**: Ask the user about the tech stack directly.
-- **Multiple languages detected**: Focus on the backend language and note others.
-- **Monorepo structure**: Identify the specific backend directory.
-- **No clear architecture**: Note as "undetermined" and ask the user.
-- **Memory files already exist in scope=initial**: Append new findings; do not overwrite.
-- **No memory files exist in scope=sync**: Suggest running a fresh `scope=initial` scan.
-- **Large codebase**: Focus on key directories (`src/`, `app/`, `cmd/`).
-- **Generated code present**: Note which files are generated.
-- **Conflicting changes detected**: Present conflicts to the user; do not auto-resolve.
-- **No changes detected**: Report "Memory is up to date".
-- **Deleted memory items**: Mark as deprecated; never remove the entry.
+- **No manifest found**: ask the user about the stack; do not guess.
+- **Several languages**: focus on the backend language; note the others in project-overview.md.
+- **Monorepo**: see Step 2.1. One memory folder per project root; record which service was scanned in project-overview.md.
+- **No clear architecture**: record `undetermined`; ask only in `mode=interactive`.
+- **scope=initial but memory exists**: append findings; never overwrite.
+- **scope=sync but no memory**: initialize the missing files (Step 1.2).
+- **Generated code**: note which folders are generated; don't extract conventions from them.
+- **No changes**: report "Memory is up to date" per file.
+
+## References
+
+- `references/stack-detection.md`: read in Step 2 to detect language, framework, ORM, database and test tooling per ecosystem, to extract tables, endpoints and conventions, and for directory-structure hints and the exclusion list.
+- `references/output-templates.md`: read in Steps 4 and 5 for memory entry formats and the discovery and change summary templates.

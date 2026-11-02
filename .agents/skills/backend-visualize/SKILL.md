@@ -1,722 +1,171 @@
 ---
 name: backend-visualize
-description: "Generate beautiful, themed Mermaid diagrams from database schemas, ORM models, migrations, or user descriptions. Supports ERD, class diagrams, user/actor diagrams, flowcharts, sequence diagrams, and architecture diagrams. Use this skill when the user says 'visualize database', 'draw ERD', 'create class diagram', 'diagram schema', 'show me the database', or wants a visual representation of backend structure."
+description: Generates themed, validated Mermaid diagrams of a backend from SQL DDL, migrations, ORM models, route code, project memory or a plain-text description. Covers ERDs, class diagrams, user and role access maps, flowcharts, sequence diagrams, state (lifecycle) diagrams, and architecture, deployment and module-dependency diagrams. Use when the user says "visualize the database", "draw an ERD", "diagram the schema", "show me the database", "create a class diagram", "draw the architecture", "sequence diagram for this endpoint", "flowchart of the checkout process", "order status state machine", "who can access what", or "make it visual". It draws and optionally saves diagrams; it does not design schemas (backend-db-design) or choose an architecture (backend-architect).
 ---
 
 # Backend Visualize
 
-## When to Activate
+Turns real project sources into Mermaid diagrams that render, read well in light and dark themes, and use one color model across every diagram type.
 
-- User says "visualize database", "draw ERD", "create class diagram"
-- User says "diagram schema", "show me the database", "make it visual"
-- User wants a visual representation of backend/data structure
-- User wants user flows, actor diagrams, or system architecture diagrams
-- After `backend-db-design` or `backend-architect` to produce diagrams
+## When to Use
 
-## Prerequisites
+- The user asks for any diagram of the backend: data model, classes, roles and access, a process, a request flow, a lifecycle, or the system architecture.
+- After `backend-db-design`, `backend-architect` or `backend-refactor`, to draw the result.
+- Not for designing: schema decisions belong to `backend-db-design`, architecture choices to `backend-architect`. This skill draws what exists or what the user describes.
 
-See `_shared/context-loading.md` for standard prerequisites (project root check, manifest detection, memory file presence, fallback rules, and context priority list).
+## Before You Start
 
-Skill-specific prerequisites:
+1. Resolve the shared docs folder ("<shared>"): first `_shared/` inside this skill's folder (bundled installs, e.g. Claude.ai), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
+2. Read `<shared>/tool-rules.md` (mode=auto contract, checkpoints) and `<shared>/host-tools.md` if the actions named here do not match your host's tool names.
+3. Load project memory per `<shared>/context-loading.md`, but only the files the chosen diagram type needs (see the Sources table). If memory is missing or stale and the source is the codebase, suggest `backend-scan` and continue from code.
+   - **Skip project and memory checks** when the source is a user description or pasted DDL/models. A quick sketch needs no project root.
+4. If the detected stack matches a file in `<shared>/stacks/`, read it (for example ORM and migration layout hints).
 
-- REQUIRED: diagram type chosen by user
-  - Check: ask the user to pick from the diagram menu (ERD, Class, User/Actor, Flowchart, Sequence, Architecture) and confirm a non-empty choice
-  - If missing: stop and ask the user to pick a diagram type before proceeding
-- RECOMMENDED: `db-schema.md` when the user picks ERD
-  - Check: `glob .opencode/everything-backend-memory/db-schema.md`
-  - If missing: ask the user to provide a schema source (SQL DDL, ORM models, migration files, or a plain-text description)
-- RECOMMENDED: `project-overview.md` when the user picks Architecture
-  - Check: `glob .opencode/everything-backend-memory/project-overview.md`
-  - If missing: ask the user to describe the system components and connections
+## References
 
-## Required Context
+Load only what the requested diagram needs.
 
-Follow the shared priority list in `_shared/context-loading.md` (load `project-overview.md` and `tech-stack.md` first; others lazily).
+- `references/theme.md`: read before writing any diagram. Color rule, classDef palette, init directive, dark mode, accessibility metadata, legend rule, renderer versions.
+- `references/syntax-rules.md`: read before writing any diagram and when a render fails. Ids, label quoting, semicolons, applying classes per diagram type, `&` fan-out, common errors.
+- `references/erd.md`: read when the user wants an ERD or database diagram. Source precedence, cardinality and type mapping, template.
+- `references/class-diagram.md`: read when the user wants a class diagram or domain model.
+- `references/actor-diagram.md`: read when the user wants a user, role or access diagram.
+- `references/flowchart-sequence.md`: read when the user wants a flowchart, a sequence diagram or a state/lifecycle diagram.
+- `references/architecture.md`: read when the user wants an architecture, deployment-topology, module-dependency or C4-style context diagram.
 
-Diagram-specific sources:
+## Sources per Diagram Type
 
-| Diagram Type | Key Sources |
-|---|---|
-| ERD | `db-schema.md`, SQL DDL, ORM models, migration files |
-| Class Diagram | ORM models, domain entities, `db-schema.md` |
-| Architecture | `project-overview.md`, `tech-stack.md` |
-| Sequence | `api-patterns.md`, route/controller files |
-| Flowchart | User description or `project-overview.md` |
-| User/Actor | `project-overview.md`, auth/role files |
+| Diagram | Preferred sources (highest first) | Memory files to load |
+|---|---|---|
+| ERD | migrations or DDL, ORM models, user input, `db-schema.md` | `db-schema.md`, `tech-stack.md` |
+| Class | ORM models, domain and service classes | `tech-stack.md` |
+| User / Actor | auth config, role definitions, route guards | `project-overview.md`, `api-patterns.md` |
+| Flowchart | user description, handler and service code | `project-overview.md` |
+| Sequence | routes, controllers, middleware, service calls | `api-patterns.md` |
+| State | status enums, state-machine code | `db-schema.md` |
+| Architecture / deployment / modules | deployment config, imports, DI wiring | `project-overview.md`, `tech-stack.md`, `deployment.md` if present |
 
-## Visualization Process
+Never invent columns, methods, services or routes. If a source lacks detail (for example `db-schema.md` has no column lists), draw at the level the source supports and say what is omitted.
 
-### Step 0: Context Loading
+## Workflow
 
-Before asking for input, read project memory for existing context:
+### Step 1: Pick the diagram type
 
-- `project-overview.md` — project type and module boundaries
-- `tech-stack.md` — languages, frameworks, databases, ORM
-- `db-schema.md` — current database schema
-- `api-patterns.md` — existing API conventions
-- `decisions.md` — prior visual or architecture decisions
+- If the user named a type ("draw an ERD") or the request implies one ("how does login work" -> sequence), use it. Do not show a menu.
+- Otherwise ask once, with this menu:
 
-If memory is stale or empty, suggest running `backend-scan` first.
-
-### Step 1: Ask the User What to Visualize
-
-Always present the menu and let the user pick. Do not guess.
-
-```markdown
-I can generate several types of diagrams for you. Which one would you like?
-
-1. **ERD** — Entity-Relationship Diagram of your database schema
-2. **Class Diagram** — OOP/class structure from models or domain entities
-3. **User / Actor Diagram** — Who uses the system and what they can do
-4. **Flowchart** — Business process or data flow
-5. **Sequence Diagram** — How components/actors interact over time
-6. **Architecture Diagram** — High-level system components and connections
-7. **All of the above** — Generate every diagram type that fits the input
-
-What would you like to see? (You can pick a number or type the name.)
+```text
+Which diagram would you like?
+1. ERD - tables and relationships
+2. Class diagram - domain classes and associations
+3. User / actor diagram - who can do what
+4. Flowchart - a business process or data flow
+5. Sequence diagram - one request or interaction over time
+6. State diagram - the lifecycle of one entity
+7. Architecture - components, deployment or module dependencies
+8. Several - every type that fits the input
 ```
 
-If the user says "all" or picks multiple, generate each requested diagram in the same response, separated by clear headings.
+Output: one or more chosen types.
 
-### Step 2: Discover the Input Source
+### Step 2: Find the source
 
-Ask how the diagram should be sourced. Accept any of these:
+- Default: if the user gave a source (pasted DDL, a file, a description), use it. Otherwise auto-detect from the project using the Sources table: find files (migrations, schema files, models, routes), search file contents, and read the relevant files.
+- Ask the user only when nothing usable is found or two sources conflict in a way that changes the diagram.
+- If cardinality, optionality or a flow branch is ambiguous, ask before drawing.
 
-1. **Database schema dump / SQL DDL** — Paste or point to `.sql` files
-2. **ORM model files** — Prisma, TypeORM, Sequelize, Drizzle, SQLAlchemy, etc.
-3. **Migration files** — Ordered schema change files
-4. **Existing memory** — Use `db-schema.md` or `project-overview.md`
-5. **User description** — The user describes entities/relationships in plain text
-6. **Auto-detect** — Scan the project and infer the best source
+Output: the list of files or inputs the diagram is built from.
 
-If the user does not specify, default to **auto-detect** by reading the project structure and memory files.
+### Step 3: Load the references
 
-Use OpenCode tools to read files, run grep, or scan the project. See `_shared/tool-rules.md` for canonical tool-usage rules.
+Read `references/theme.md`, `references/syntax-rules.md`, and the reference for each chosen type. Do not load the other templates.
 
-### Step 3: Theme and Grouping Rules
+### Step 4: Generate
 
-Every diagram MUST use a consistent theme and clear grouping.
+- Follow the reference template's structure, but use the project's real names. Never copy template names (Blog, Orders, Billing) into the user's diagram.
+- Every diagram:
+  - starts with the init directive from `theme.md` on line 1, then the diagram header;
+  - has `accTitle` and `accDescr`;
+  - uses only the palette class names from `theme.md`, chosen by node role, with the matching shape;
+  - has no semicolons, unique alphanumeric ids, and quoted labels for anything with special characters;
+  - keeps groups to 3-7 nodes; past about 12 nodes, split into groups or separate diagrams.
+- For "several" diagrams, use this order and skip types the input cannot support: Architecture, User / Actor, ERD, Class, Flowchart, Sequence, State. Say in one line why each is useful.
+- If the project already has diagrams in another style, ask whether to match them; otherwise use this skill's theme.
 
-#### Color Theme (Mermaid classDefs)
+Output: Mermaid source for each diagram.
 
-Apply these class definitions to all diagrams. Use them consistently:
+### Step 5: Validate
 
-```mermaid
-classDef entity fill:#e1f5fe,stroke:#01579b,stroke-width:2px,color:#000;
-classDef actor fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000;
-classDef service fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#000;
-classDef database fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,color:#000;
-classDef external fill:#eceff1,stroke:#455a64,stroke-width:2px,stroke-dasharray: 5 5,color:#000;
-classDef boundary fill:#fffde7,stroke:#f57f17,stroke-width:2px,color:#000;
-classDef process fill:#e0f2f1,stroke:#00695c,stroke-width:2px,color:#000;
-classDef decision fill:#fce4ec,stroke:#c2185b,stroke-width:2px,color:#000;
-```
+1. Check each diagram against `references/syntax-rules.md` -> Common Errors: init directive on line 1, balanced `subgraph`/`end` and braces, no semicolons, no `&` outside flowcharts, unique ids, quoted special labels, correct class-application form for the diagram type.
+2. If `mmdc` (from `@mermaid-js/mermaid-cli`) is on the PATH, render each diagram to check syntax:
+   - write the diagram to a temporary `.mmd` file outside the project (the OS temp folder or your scratch folder);
+   - run a shell command: `mmdc -i <temp>.mmd -o <temp>.svg`;
+   - it starts a headless browser, so allow about 60 seconds per diagram (see `<shared>/tool-rules.md` -> Command Time Budgets);
+   - on an error, fix the diagram and render again (at most 3 attempts per diagram), then delete the temp files.
+3. If `mmdc` is not installed, do not install it without asking. Installing a package (including `npx -p @mermaid-js/mermaid-cli`, which downloads it) is Always Ask First in `<shared>/tool-rules.md`. Offer it once; if declined, rely on the checklist and say "not render-tested" in Notes.
+4. If a render keeps failing, simplify: reduce nodes, remove nesting, drop styling lines the renderer rejects (see `theme.md` -> Renderer Versions).
 
-Use the same color meaning across every diagram type:
+Done when every diagram passes the checklist and, where `mmdc` is available, renders without errors.
 
-| Color | Meaning |
-|-------|---------|
-| Blue (`entity`) | Tables, entities, domain models |
-| Orange (`actor`) | Users, actors, roles |
-| Green (`service`) | Services, modules, controllers |
-| Purple (`database`) | Databases, stores, repositories |
-| Grey dashed (`external`) | External APIs, third parties |
-| Yellow (`boundary`) | Subsystems, bounded contexts, groups |
-| Teal (`process`) | Process steps, use cases |
-| Pink (`decision`) | Decision points |
+### Step 6: Present
 
-#### Grouping Rules
+Use this format for each diagram:
 
-- Use `subgraph` blocks to group related entities/services/actors.
-- Give each subgraph a descriptive label in **Title Case**.
-- Keep each subgraph to 3–7 items when possible.
-- Add a one-line comment above each group explaining what belongs together.
-- If a diagram has more than ~12 nodes, split it into multiple subgraphs or offer to split into multiple diagrams.
+````markdown
+## ERD - Billing Service
 
-### Step 4: Generate the Diagram
-
-Choose the right Mermaid syntax for the selected diagram type. Follow the templates below exactly.
-
----
-
-## Diagram Templates
-
-### 1. ERD (Entity-Relationship Diagram)
-
-Use `erDiagram` syntax. Note: `erDiagram` does **not** support `subgraph` blocks — use color-coded `classDef` and `class` assignments to group entities by bounded context instead.
+One sentence on what the diagram shows and which sources it was built from.
 
 ```mermaid
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#e1f5fe", "primaryBorderColor": "#01579b", "primaryTextColor": "#000000", "lineColor": "#546e7a"}}}%%
 erDiagram
-    %% 🔐 Authentication
-    USERS ||--o{ POSTS : writes
-    USERS ||--o{ COMMENTS : writes
-    USERS }o--o{ ROLES : has
-
-    %% 📝 Content
-    POSTS ||--o{ COMMENTS : has
-    CATEGORIES ||--o{ POSTS : contains
-
-    USERS {
-        uuid id PK
-        string email UK
-        string password_hash
-        string status
-        timestamp created_at
-        timestamp updated_at
-    }
-
-    ROLES {
-        uuid id PK
-        string name UK
-        string permissions
-    }
-
-    POSTS {
-        uuid id PK
-        uuid user_id FK
-        uuid category_id FK
-        string title
-        string slug UK
-        text content
-        string status
-        timestamp published_at
-        timestamp created_at
-    }
-
-    CATEGORIES {
-        uuid id PK
-        string name UK
-        string slug UK
-    }
-
-    COMMENTS {
-        uuid id PK
-        uuid post_id FK
-        uuid user_id FK
-        text content
-        timestamp created_at
-    }
-
-    %% Per-group classDefs (semantic, not shape-based)
-    %% NOTE: erDiagram does NOT use semicolons after classDef/class statements.
-    classDef auth fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,color:#000
-    classDef content fill:#e1f5fe,stroke:#01579b,stroke-width:2px,color:#000
-    classDef boundary fill:#fffde7,stroke:#f57f17,stroke-width:2px,color:#000
-
-    class USERS,ROLES auth
-    class POSTS,COMMENTS content
-    class CATEGORIES boundary
-```
-
-ERD rules:
-- **Do not use `subgraph` in `erDiagram`** — Mermaid silently fails to parse them, leaking the directive text into the output. Group entities with `%% 🔐 Authentication` comment headers + matching `classDef`/`class` assignments instead.
-- Use `PK`, `FK`, `UK` annotations on every relevant column.
-- **`erDiagram` does NOT use semicolons** after `classDef` or `class` statements. Using `;` causes a parse error. Write:
-  ```mermaid
-  classDef auth fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,color:#000
-  class USERS,ROLES auth
-  ```
-- **Per-group classDefs** named by semantic role (`auth`, `content`, `boundary`) and applied via a single `class A,B,C <name>` line per group. `erDiagram` supports the comma-separated multi-node form here.
-- Show cardinalities explicitly (`||--o{`, `}o--o{`, etc.).
-- Keep relationship labels short and verb-based.
-- For fan-out relationships (one source → many targets), write each relationship on its own line — `erDiagram` does **not** support the `&` chaining operator. Example:
-  ```mermaid
-  USERS ||--o{ POSTS : writes
-  USERS ||--o{ COMMENTS : writes
-  USERS ||--o{ LIKES : writes
-  ```
-- Keep each bounded context to 3–7 entities. If a context exceeds 7, split into a focused per-context ERD.
-
----
-
-### 2. Class Diagram
-
-Use `classDiagram` syntax. `classDiagram` supports `namespace` blocks (not `subgraph`) and does **not** support the `&` chaining operator — write each association on its own line.
-
-```mermaid
-classDiagram
-    direction LR
-
-    class User {
-        +UUID id
-        +String email
-        +String passwordHash
-        +String status
-        +DateTime createdAt
-        +DateTime updatedAt
-        +login()
-        +updateProfile()
-    }
-
-    class Post {
-        +UUID id
-        +UUID userId
-        +UUID categoryId
-        +String title
-        +String slug
-        +String content
-        +String status
-        +publish()
-        +archive()
-    }
-
-    class Category {
-        +UUID id
-        +String name
-        +String slug
-    }
-
-    class Comment {
-        +UUID id
-        +UUID postId
-        +UUID userId
-        +String content
-    }
-
-    User "1" --> "*" Post : writes
-    User "1" --> "*" Comment : writes
-    Post "1" --> "*" Comment : has
-    Post "*" --> "1" Category : belongs to
-
-    %% Per-group classDefs (semantic, not shape-based)
-    %% NOTE: classDiagram requires NO semicolons AND one class assignment per line.
-    classDef auth fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,color:#000
-    classDef content fill:#e1f5fe,stroke:#01579b,stroke-width:2px,color:#000
-
-    class User auth
-    class Post content
-    class Category content
-    class Comment content
-```
-
-Class diagram rules:
-- Group related classes in `namespace` blocks. **Namespace labels can use emoji + Title Case** for visual grouping in editors that render the label (e.g., `namespace 🔐Auth`, `namespace 📝Content`).
-  ```mermaid
-  classDiagram
-      namespace 🔐Auth {
-          class User
-          class Role
-      }
-      namespace 📝Content {
-          class Post
-          class Category
-          class Comment
-      }
-  ```
-- Show visibility (`+`, `-`, `#`) for public/private/protected members.
-- Label associations with cardinality and role: `ClassA "1" --> "*" ClassB : verb`.
-- **No `&` chaining in `classDiagram`** — write each association on its own line:
-  ```mermaid
-  User "1" --> "*" Post : writes
-  User "1" --> "*" Comment : writes
-  User "1" --> "*" Like : writes
-  ```
-- **Custom `classDef` per group**, named by semantic role. Use a single `class A,B,C <name>;` line per group to apply colors.
-
----
-
-### 3. User / Actor Diagram
-
-Use `graph TD` with layered subgraphs, mixed node shapes, and `&` chaining.
-
-```mermaid
-graph TD
-    subgraph AuthLayer["🔐 Authentication Boundary"]
-        Guest((Guest))
-        StaffLogin[/ /login/ /]
-        PortalLogin[/ /portal/login/ /]
-        JWT{{NextAuth Session<br/>Role + Permissions Payload}}
-    end
-
-    subgraph Roles["👥 Resolved Context (Roles)"]
-        SuperAdmin([Super Admin])
-        StaffFinance([Finance Staff])
-        StaffPM([Project Mgmt])
-        StaffAdmin([Administrative])
-        ClientActor([Client])
-    end
-
-    subgraph AppModules["⚙️ Internal App Modules"]
-        Dashboard[Dashboard]
-        Finance[Finance · Tax]
-        Projects[Projects · Tasks]
-        Inventory[Inventory · Stock]
-        Documents[Documents · Versions]
-        Vendors[Vendors · POs]
-        Clients[Clients CRM]
-        Employees[Employees · HR]
-        Performance[Performance KPIs]
-        Settings[Settings · Role Matrix]
-        Log[Audit Log]
-    end
-
-    subgraph PortalApp["🌐 Client Portal"]
-        PortalDash[Portal Dashboard]
-        PortalProject[Read-only Project]
-    end
-
-    Guest -->|Internal Auth| StaffLogin
-    Guest -->|Client Auth| PortalLogin
-    StaffLogin --> JWT
-    PortalLogin --> JWT
-
-    JWT -.->|Evaluates Role| SuperAdmin
-    JWT -.->|Evaluates Role| StaffFinance
-    JWT -.->|Evaluates Role| StaffPM
-    JWT -.->|Evaluates Role| StaffAdmin
-    JWT -.->|Evaluates Role| ClientActor
-
-    %% Access Mapping
-    SuperAdmin ==>|Full Access| Dashboard & Finance & Projects & Inventory & Documents & Vendors & Clients & Employees & Performance & Settings & Log
-    StaffFinance -->|Finance Scope| Dashboard & Finance & Projects & Vendors
-    StaffPM -->|PM Scope| Dashboard & Projects & Inventory & Documents & Vendors & Performance
-    StaffAdmin -->|Admin Scope| Dashboard & Projects & Documents & Clients & Employees & Vendors
-    ClientActor -->|External Scope| PortalDash & PortalProject
-
-    classDef auth fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,color:#000;
-    classDef role fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000;
-    classDef module fill:#e1f5fe,stroke:#01579b,stroke-width:2px,color:#000;
-    classDef portal fill:#fffde7,stroke:#f57f17,stroke-width:2px,color:#000;
-
-    class Guest,StaffLogin,PortalLogin,JWT auth;
-    class SuperAdmin,StaffFinance,StaffPM,StaffAdmin,ClientActor role;
-    class Dashboard,Finance,Projects,Inventory,Documents,Vendors,Clients,Employees,Performance,Settings,Log module;
-    class PortalDash,PortalProject portal;
-```
-
-User/actor diagram rules:
-- Direction: `graph TD` (top-down) is the default for layered systems. Use `graph LR` only for linear flows with few layers.
-- **Node shapes carry meaning** — pick the shape that fits the role:
-  - `((Label))` — external/circular actor (Guest, Client, external user)
-  - `[/Label/]` — input/entry route or form (login pages, signup endpoints)
-  - `{{Label}}` — decision/transformation node (auth session, evaluator, middleware)
-  - `([Label])` — resolved role/context (a role, a tenant, a resolved identity)
-  - `[Label]` — internal app module, page, or service
-  - `[(Label)]` — data store (database, cache, queue)
-- **Subgraph labels use emoji + Title Case**: e.g., `🔐 Authentication Boundary`, `👥 Resolved Context (Roles)`, `⚙️ Internal App Modules`, `🌐 Client Portal`.
-- **Use `&` chaining to fan out from one source to many targets** in a single statement (one node → many modules). This is the canonical way to show "role X has access to modules A, B, C, ..." without repeating the source on every line.
-  - **Critical syntax rule**: the `&` chain MUST stay on a single line. Do not break it across lines — Mermaid parses `&` chains per-line, and a line break mid-chain causes a parse error.
-  - Each target in the chain must be a defined node id (no inline shapes inside the chain).
-- **Edge styles carry meaning**:
-  - `-->` solid arrow: direct flow / dependency
-  - `-.->` dotted arrow: evaluation / resolution / lookup
-  - `==>` thick arrow: high-privilege or full-access mapping
-  - `-->|label|` : always label arrows; the label says *what* the relationship is
-- **Group semantically, not just structurally**:
-  - Authentication boundary (entry points, session, identity)
-  - Resolved context (roles, tenants, identities)
-  - Internal app modules (features the system owns)
-  - External/portal apps (separate surfaces, even if same backend)
-- **Custom `classDef` per group**, not per the global theme. Name classDefs by their semantic role (`auth`, `role`, `module`, `portal`) and map nodes to the class that matches their group, not their shape.
-- Keep each subgraph to 3–7 items when possible. If a module list exceeds 7, split into a second diagram or use a collapsed "Other modules" node.
-
----
-
-### 4. Flowchart
-
-Use `graph TD` with semantic subgraphs, mixed node shapes, and `&` chaining for fan-out.
-
-```mermaid
-graph TD
-    subgraph Entry["🚪 Entry"]
-        Start([User submits post])
-    end
-
-    subgraph Validation["✅ Validation"]
-        Validate{Valid?}
-        Reject[Return validation errors]
-    end
-
-    subgraph Drafting["📝 Drafting"]
-        Save[Save draft post]
-        Publish{Publish now?}
-        Draft[Mark as draft]
-    end
-
-    subgraph Moderation["🛡️ Moderation"]
-        CheckModeration{Needs moderation?}
-        Queue[Queue for review]
-        Approve{Approved?}
-        Rejected[Reject post]
-    end
-
-    subgraph Publish["🚀 Publish"]
-        Live[Publish post]
-        Notify[Notify subscribers]
-    end
-
-    subgraph Exit["🏁 Exit"]
-        EndProc([End])
-    end
-
-    Start --> Validate
-    Validate -->|No| Reject
-    Reject --> Start
-    Validate -->|Yes| Save
-    Save --> Publish
-    Publish -->|No| Draft
-    Publish -->|Yes| CheckModeration
-    CheckModeration -->|No| Live
-    CheckModeration -->|Yes| Queue
-    Queue --> Approve
-    Approve -->|Yes| Live
-    Approve -->|No| Rejected
-    Live --> Notify
-    Draft --> EndProc
-    Rejected --> EndProc
-    Notify --> EndProc
-
-    classDef process fill:#e0f2f1,stroke:#00695c,stroke-width:2px,color:#000;
-    classDef decision fill:#fce4ec,stroke:#c2185b,stroke-width:2px,color:#000;
-    classDef startend fill:#e1f5fe,stroke:#01579b,stroke-width:2px,color:#000;
-    classDef reject fill:#ffebee,stroke:#c62828,stroke-width:2px,color:#000;
-
-    class Start,EndProc startend;
-    class Validate,Publish,CheckModeration,Approve decision;
-    class Save,Draft,Queue,Live,Notify process;
-    class Reject,Rejected reject;
-```
-
-Flowchart rules:
-- **Node shapes carry meaning**:
-  - `([Label])` — terminal (start/end)
-  - `{Label}` — decision diamond
-  - `[Label]` — process step
-- **Subgraph labels use emoji + Title Case** for visual phases: `🚪 Entry`, `✅ Validation`, `📝 Drafting`, `🛡️ Moderation`, `🚀 Publish`, `🏁 Exit`.
-- **Use `&` chaining to fan out from one source to many targets** in a single statement (e.g., one moderator action → multiple notify targets). The chain **must stay on one line** — Mermaid parses `&` per line.
-  ```mermaid
-  Notify ==>|fans out| Email & Push & Webhook & InApp
-  ```
-  If the chain gets long, split the *source* (one statement per source) rather than the chain itself.
-- Label every outgoing arrow with the condition/trigger: `-->|Yes|`, `-->|No|`, `-->|timeout|`.
-- Keep the happy path left-to-right or top-to-bottom.
-- **Custom `classDef` per phase**, named by semantic role. Use a single `class A,B,C <name>;` line per phase to apply colors.
-
----
-
-### 5. Sequence Diagram
-
-Use `sequenceDiagram` syntax with `rect` blocks for phased grouping.
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor U as User
-    participant C as Client
-    participant G as API Gateway
-    participant A as Auth Service
-    participant S as Content Service
-    participant D as Database
-    participant Ca as Cache
-
-    rect rgb(243, 229, 245)
-        Note over U,G: 🔐 Auth Phase
-        U->>C: Submit post
-        C->>G: POST /posts
-        G->>A: Validate token
-        A-->>G: User claims
-    end
-
-    rect rgb(225, 245, 254)
-        Note over G,Ca: ⚙️ Content Phase
-        G->>S: Create post
-        S->>Ca: Check category cache
-        Ca-->>S: Cache miss
-        S->>D: SELECT category
-        D-->>S: Category row
-    end
-
-    rect rgb(232, 245, 233)
-        Note over S,Ca: 💾 Persistence Phase
-        S->>D: INSERT post
-        D-->>S: Post row
-        S->>Ca: Invalidate post list
-    end
-
-    rect rgb(255, 253, 231)
-        Note over G,U: 🚀 Response Phase
-        S-->>G: Post created
-        G-->>C: 201 Created
-        C-->>U: Show success
-    end
-```
-
-Sequence diagram rules:
-- Use `actor` for human participants; use `participant` for systems/services.
-- Use short, descriptive participant aliases (`A` for Auth, `S` for Service, `D` for DB, `Ca` for Cache).
-- Number important steps with `autonumber`.
-- **Group related interactions with `rect rgb(R, G, B)` blocks**. Use a `Note over ... : 🔐 Phase Name` line as the first thing inside each `rect` to label the phase. The `rgb()` color should roughly match the `classDef` color used elsewhere in the project for that phase (e.g., purple `243,229,245` for auth, blue `225,245,254` for content, green `232,245,233` for persistence, yellow `255,253,231` for response).
-- **No `&` chaining in `sequenceDiagram`** — each message is its own line: `A->>B: msg`, `B-->>A: reply`.
-- Show synchronous calls as solid arrows (`->>`), returns as dashed (`-->>`). Self-messages use `A->>A: msg` with a small loop.
-- The `Note over X,Y:` line is the canonical way to add a label inside a `rect` block — it does not count as a message and does not advance `autonumber`.
-
----
-
-### 6. Architecture Diagram
-
-Use `graph TD` syntax with layered subgraphs and `&` chaining for fan-out.
-
-```mermaid
-graph TD
-    subgraph Clients["💻 Clients"]
-        Web[Web App]
-        Mobile[Mobile App]
-        Admin[Admin Dashboard]
-    end
-
-    subgraph Edge["🌐 Edge / Gateway"]
-        CDN[CDN]
-        LB[Load Balancer]
-        GW[API Gateway]
-    end
-
-    subgraph Services["🧩 Services"]
-        Auth[Auth Service]
-        Content[Content Service]
-        Notification[Notification Service]
-    end
-
-    subgraph Data["💾 Data"]
-        DB[(Primary DB)]
-        Replica[(Read Replica)]
-        Cache[(Redis Cache)]
-        Queue[(Message Queue)]
-    end
-
-    subgraph External["🔌 External"]
-        Email[Email Provider]
-        Storage[Object Storage]
-    end
-
-    Web --> CDN
-    Mobile --> LB
-    Admin --> GW
-    CDN --> LB
-    LB --> GW
-    GW ==>|routes| Auth & Content & Notification
-    Content --> Notification
-    Auth --> DB
-    Content --> DB
-    Content --> Replica
-    Content --> Cache
-    Notification --> Queue
-    Notification --> Email
-    Content --> Storage
-
-    classDef client fill:#e1f5fe,stroke:#01579b,stroke-width:2px,color:#000;
-    classDef edge fill:#fffde7,stroke:#f57f17,stroke-width:2px,color:#000;
-    classDef service fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#000;
-    classDef database fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px,color:#000;
-    classDef external fill:#eceff1,stroke:#455a64,stroke-width:2px,stroke-dasharray: 5 5,color:#000;
-
-    class Web,Mobile,Admin client;
-    class CDN,LB,GW edge;
-    class Auth,Content,Notification service;
-    class DB,Replica,Cache,Queue database;
-    class Email,Storage external;
-```
-
-Architecture diagram rules:
-- Group by logical layers (Clients, Edge, Services, Data, External).
-- **Subgraph labels use emoji + Title Case**: `💻 Clients`, `🌐 Edge / Gateway`, `🧩 Services`, `💾 Data`, `🔌 External`.
-- Show directional data flow with arrows. Use `==>|label|` for high-throughput or privileged paths (gateway routing, fan-out) and `-->` for standard flow.
-- Use `&` chaining to express one source fanning out to multiple targets on a single line — but **never break a chain across lines**.
-- Use dashed borders (`stroke-dasharray: 5 5`) for external/third-party components.
-- Label critical connections if the relationship is not obvious.
-- **Custom `classDef` per layer**, named by semantic role (`client`, `edge`, `service`, `database`, `external`).
-
----
-
-## Output Format
-
-For each generated diagram, produce:
-
-1. **Heading** with the diagram type
-2. **One-line summary** of what the diagram shows
-3. **Mermaid code block** ( fenced with ` ```mermaid ` )
-4. **Legend** explaining colors and shapes
-5. **Notes** highlighting important relationships, assumptions, or missing data
-
-Example:
-
-```markdown
-## ERD — Blog Platform
-
-This diagram shows the core entities and relationships for the blog domain.
-
-```mermaid
-...diagram...
+    accTitle: Billing data model
+    accDescr: Customers have invoices and invoices have line items.
+    CUSTOMERS ||--o{ INVOICES : billed
+    INVOICES ||--o{ LINE_ITEMS : contains
 ```
 
 **Legend:**
-- Blue boxes = database entities
-- Orange circles = users/actors
-- Purple cylinders = data stores
-- Solid lines = relationships with cardinality
+- Blue boxes (entity) = tables
+- Solid lines = relationships, with cardinality at each end
 
 **Notes:**
-- Soft delete is implemented via `deleted_at` on USERS and POSTS.
-- Many-to-many between USERS and ROLES is resolved by a junction table.
+- Columns omitted: db-schema.md lists tables only. Ask to read the migrations for a full ERD.
+- Validation: rendered with mmdc.
+````
+
+- Build the legend from the classes and edge styles the diagram actually uses (`theme.md` -> Legend Rule).
+- Notes list assumptions, omitted detail, source conflicts, and whether the diagram was render-tested.
+
+### Step 7: Save (optional)
+
+Ask: "Save these diagrams to a file?" Suggest `docs/diagrams/<topic>.md` (or the project's existing docs folder). Do not offer to write diagrams into project memory; no memory file holds diagrams.
+
+If the user agrees:
+
+1. Check whether the target file exists. If it does, show what would change and ask whether to replace it, append a new section, or pick another name. Never overwrite silently.
+2. Start a checkpoint before the first edit: `node <shared>/scripts/checkpoint.js start --skill backend-visualize --feature <slug>`. Record each file you create or edit (`checkpoint.js record`), snapshot after writing, and close it when done. If Node is unavailable, follow `<shared>/tool-rules.md` -> Concurrent & Partial Work by hand.
+3. Start the file with a provenance header:
+
+```text
+<!-- Generated by backend-visualize on YYYY-MM-DD from: <source files> at commit <short sha or "uncommitted"> -->
 ```
 
----
+4. Write each diagram in the Step 6 format.
 
-## Handling Multiple Diagrams
-
-If the user requests "all" diagrams, generate them in this order:
-
-1. Architecture Diagram (system context)
-2. User / Actor Diagram (who uses it)
-3. ERD (data model)
-4. Class Diagram (if object/model view adds value)
-5. Flowchart (if a key business process is known)
-6. Sequence Diagram (if a key interaction is known)
-
-For each diagram, explain briefly why it is useful. Do not overwhelm the user; if the schema is large, offer to split into focused diagrams by bounded context.
-
----
+Done when the diagrams are presented (and, if requested, saved with the checkpoint closed).
 
 ## Edge Cases
 
-- **No schema available**: Ask the user to describe the core entities and relationships, then generate a diagram from the description.
-- **Very large schema**: Split into multiple ERDs by subgraph/bounded context. Offer to generate per-context diagrams.
-- **Ambiguous relationships**: Ask the user to confirm cardinality and optionality before drawing.
-- **No ORM / no migrations**: Fall back to SQL DDL or plain-text description.
-- **User picks diagram before providing input**: Ask for the input source first, then generate.
-- **Mermaid rendering issues**: Simplify the diagram, reduce node count, or split subgraphs. Avoid deeply nested subgraphs.
-- **Conflicting visual conventions**: Always prefer this skill's theme. If the project has existing diagrams, match their style after confirming with the user.
-- **Diagram becomes too wide**: Switch direction from `LR` to `TD`, or split into linked diagrams.
-- **`&` chaining syntax error**: Mermaid parses `&` chains **per line**. A chain like:
-  ```mermaid
-  Role ==>|scope| A & B
-      & C & D
-  ```
-  is invalid — the second line starts with `&` outside a statement and breaks the parser. Keep the entire chain on **one line**:
-  ```mermaid
-  Role ==>|scope| A & B & C & D
-  ```
-  If a chain gets too long, split the *source* (one statement per source) rather than the chain.
-- **Unknown node in chain**: Every id in a `&` chain must be declared as a node earlier in the diagram. If you see `Expecting 'PS', 'PE', ...` errors after a chain, check that every chained id is defined.
-- **`&` is only for `graph`/`flowchart`**: It does **not** work in `erDiagram`, `classDiagram`, `sequenceDiagram`, or `stateDiagram`. In those, write one statement per source/target pair.
-- **Semicolons in `erDiagram`/`classDiagram`**: Unlike `graph`/`flowchart`, neither `erDiagram` nor `classDiagram` accept semicolons after `classDef` or `class` statements. Using `;` produces a parse error like `Expecting 'EOF', 'SPACE', ... got ';'`. Always write:
-  ```mermaid
-  classDef auth fill:#f9f,stroke:#333,stroke-width:4px
-  class User auth
-  ```
-  not `class User auth;`.
-- **Multi-node `class A,B,C name` only in some diagrams**: `erDiagram` and `graph`/`flowchart` accept comma-separated multi-node class assignments (`class A,B,C name`). `classDiagram` does **not** — it requires one statement per node:
-  ```mermaid
-  class A name
-  class B name
-  class C name
-  ```
+- **No schema or code**: ask the user to describe the entities or components, then draw from the description and say so in Notes.
+- **Very large schema or system**: one diagram per bounded context or service, plus a small overview diagram. Offer the split before drawing everything.
+- **Schema unchanged after a refactor**: offer a module-dependency diagram (`architecture.md` -> Variants) instead of an identical ERD.
+- **Diagram too wide**: switch `LR` to `TD`, or split into linked diagrams.
+- **Renderer rejects valid syntax**: the target renderer is probably older; drop the lines listed in `theme.md` -> Renderer Versions.
 
----
+## Rules
 
-## Saving Output
-
-Ask the user after generation:
-
-> "Would you like me to save these diagrams to a file (e.g., `docs/diagrams.md`) or update project memory?"
-
-If yes, write the diagrams to a Markdown file under `docs/` or the project's preferred documentation path.
+- Read-only by default. The only writes are the optional saved diagram file and its checkpoint, after the user agrees.
+- One color model: color encodes node role, containers encode groups, and every color is paired with a shape or label cue.
+- Every fence you open is closed. Use a four-backtick outer fence when an example contains a fenced block.
+- Validate before presenting. Never present a diagram you know fails to render.

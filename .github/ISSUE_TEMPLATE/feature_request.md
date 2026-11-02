@@ -31,6 +31,8 @@ Who benefits from this, and how? What concrete workflow does it improve?
 - [ ] `backend-api-design`
 - [ ] `backend-implement`
 - [ ] `backend-refactor`
+- [ ] `backend-debug`
+- [ ] `backend-security`
 - [ ] `backend-test`
 - [ ] `backend-auth`
 - [ ] `backend-ops`
@@ -38,6 +40,7 @@ Who benefits from this, and how? What concrete workflow does it improve?
 - [ ] `backend-migrate`
 - [ ] `backend-doctor`
 - [ ] Installer (`scripts/install.js`)
+- [ ] Claude Code plugin, guard hook or scripts (`.claude-plugin/`, `hooks/`, `_shared/scripts/`)
 - [ ] Other (describe below)
 
 ## Additional context

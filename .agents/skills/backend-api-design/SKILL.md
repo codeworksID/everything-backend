@@ -1,357 +1,173 @@
 ---
 name: backend-api-design
-description: "Design API endpoints including resource structure, request/response schemas, error handling, authentication, and versioning. Supports REST, GraphQL, and gRPC. Creates OpenAPI/Swagger specifications. Use this skill when the user says 'design API', 'create endpoints', 'plan routes', or starting a new feature with API surface."
+description: "Designs API contracts before code is written: resources, endpoints, request and response schemas, error format, pagination, versioning and per-endpoint authorization rules. Writes the contract to an OpenAPI spec (docs/api/openapi.yaml by default, or the existing spec) and records conventions in api-patterns.md memory. REST is fully covered; GraphQL schemas and gRPC .proto contracts get basic guidance. Use when the user says 'design the API', 'what endpoints do I need', 'plan routes', 'write an OpenAPI spec', 'Swagger', 'define the API contract', 'design a GraphQL schema', 'write a proto file', 'add an endpoint to the spec', or 'version or deprecate an endpoint'. Not for writing handler code (backend-implement), choosing the login mechanism or auth endpoints (backend-auth), or reviewing API security (backend-security)."
 ---
 
 # Backend API Design
 
-## When to Activate
+Design the contract first. This skill produces a reviewed API contract and the memory entries that downstream skills consume. It does not write handler code.
 
-- User wants to design API endpoints
-- User says "design API", "create endpoints", "plan routes"
-- Starting a new feature with API surface
-- User asks "what endpoints do I need?"
-- Need to add new API routes
+Coverage: REST and OpenAPI are fully covered. GraphQL and gRPC guidance is basic (schema shape, errors, limits, breaking-change checks); rely on the framework's own docs for anything deeper.
 
-## Prerequisites
+## When to Use
 
-See `_shared/context-loading.md` for standard prerequisites (project root check, manifest detection, shared file presence, memory directory fallback, and context priority list).
+- The user wants to design or extend an API surface, or asks "what endpoints do I need?"
+- A new feature needs endpoints, and no contract exists for them yet.
+- The user wants an OpenAPI/Swagger spec, a GraphQL schema, or a `.proto` file.
+- An endpoint must be versioned, changed in a breaking way, or deprecated.
 
-Add any skill-specific prerequisites below:
-- REQUIRED: API consumers and resources are identified
-  - Check: ask the user "What resources do you need to expose?" and "Who are the consumers?" and confirm non-empty answers
-  - If missing: stop and ask the user to identify at least one resource and one consumer before proceeding
-- RECOMMENDED: `api-patterns.md` exists
-  - Check: `glob .opencode/everything-backend-memory/api-patterns.md`
-  - If missing: create an empty `api-patterns.md` and append after this design is approved
+Not for:
+- Building the endpoints: hand off to `backend-implement` after this skill.
+- Choosing the auth mechanism (sessions, JWT, OAuth) or designing login, refresh and logout endpoints: that is `backend-auth`. This skill records only which endpoints need auth and which role or ownership rule applies.
+- Security review of an existing API: `backend-security`.
+- Fixing a broken endpoint: `backend-debug`.
 
-## Required Context
+## Before You Start
 
-See `_shared/context-loading.md` § Standard Required Context Priority List for the shared priority order and loading rules.
+1. Resolve the shared docs folder ("<shared>"): first `_shared/` inside this skill's folder (bundled installs, e.g. Claude.ai), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
+2. Read `<shared>/tool-rules.md` (mode=auto contract, checkpoints) and `<shared>/host-tools.md` if the action names below don't match your host's tools. Read `<shared>/principles.md` -> API and Security; apply them to every endpoint. Read `<shared>/memory-schema.md` -> api-patterns.md before writing memory.
+3. Load project memory per `<shared>/context-loading.md`: `project-overview.md`, `tech-stack.md`, `api-patterns.md` (conventions and endpoint inventory), `db-schema.md` (the data the API exposes), and `decisions.md` (prior protocol and versioning decisions). If memory is empty or stale, suggest running `backend-scan` first; if the user declines, continue with what the codebase shows.
+4. If the detected stack matches a file in `<shared>/stacks/`, read it.
 
-This skill always loads priorities 1 (`project-overview.md`) and 2 (`tech-stack.md`), plus 3 (`db-schema.md`) and 4 (`api-patterns.md`) when designing API endpoints.
+## Workflow
 
-## Design Process
+### Step 1: Gather requirements
 
-### Step 0: Context Loading
+Ask once, in a single message, only for what memory and the request do not already answer:
 
-Before proposing endpoints, read project memory for existing context:
+1. Resources to expose (users, orders, ...) and the operations on each (CRUD, custom actions).
+2. Consumers (web frontend, mobile, third party, internal service). Third-party consumers raise the bar on versioning and docs.
+3. Protocol preference, if any (REST, GraphQL, gRPC).
+4. Who may call each operation: public, any authenticated user, owner only, or a named role.
 
-- `project-overview.md` — project type and exposed resources
-- `tech-stack.md` — language, framework, auth choices
-- `api-patterns.md` — existing API conventions and endpoint inventory
-- `db-schema.md` — data model the API exposes
-- `decisions.md` — prior API or architecture decisions
+Confirm the resource list back: "Resources: [list]. Did I miss any?"
 
-If memory is stale or empty, suggest running `backend-scan` first.
+Stop and ask if no resource or no consumer can be identified. Do not invent a domain.
 
-### Step 1: Requirements Gathering
+Output: a confirmed list of resources, operations, consumers and access rules.
 
-Ask the user iteratively:
+### Step 2: Discover existing contracts and routes
 
-1. "What resources do you need to expose?" (users, posts, orders, etc.)
-2. "What operations do you need?" (CRUD, custom actions)
-3. "Who are the consumers?" (frontend, mobile, third-party, internal)
-4. "Any specific protocols?" (REST, GraphQL, gRPC)
-5. "Authentication needed?" (public, API key, OAuth, JWT)
+Before proposing anything, look at what exists:
 
-Always confirm:
-- "Let me confirm the resources: [list]. Did I miss any?"
+- Find spec files: `**/openapi*.{yaml,yml,json}`, `**/swagger*.{yaml,yml,json}`, `**/*.proto`, `**/*.graphql`, `**/*.gql`, `buf.yaml`. Skip `node_modules`, `vendor` and build output.
+- Search file contents for route definitions to learn the real conventions (framework route decorators, router calls, `@app.get`, `router.`, `@GetMapping`, `HandleFunc`, resolver and service definitions).
+- Compare the code with the `api-patterns.md` endpoint inventory. Note drift in either direction.
 
-### Step 1.5: Tool-Assisted Discovery (MANDATORY)
+Rules:
+- If a spec exists, it is the contract. Extend it in place and keep its OpenAPI version, casing, error shape and pagination style. Never write a second, competing spec.
+- If code and spec disagree, report the drift and ask which one is the truth before changing either.
+- If the project is code-first (the spec is generated from annotations or schemas), design in the same form the generator reads and note that the generated spec is the artifact.
 
-Before proposing endpoints, inspect the real codebase and context with OpenCode tools.
+Output: the contract file path to use, the conventions to follow, and any drift found.
 
-See `_shared/tool-rules.md` for the canonical tool-usage rules.
+### Step 3: Choose the protocol
 
-### Step 1.6: API Principles (MANDATORY)
+Default to REST unless the project already uses another protocol or the needs clearly call for one.
 
-Apply the API principles in `_shared/principles.md` before defining endpoints.
+| Protocol | Choose when | Watch out for |
+|---|---|---|
+| REST | CRUD, web and mobile clients, third-party consumers, HTTP caching matters | Over- or under-fetching, many round trips |
+| GraphQL | Many clients with different data needs over one graph | N+1 queries, query cost abuse, harder HTTP caching |
+| gRPC | Internal service-to-service calls, streaming, strict typed contracts | Limited browser support (needs gRPC-Web or a gateway), harder debugging |
 
-### Step 2: API Protocol Selection
+Mixed is fine (for example REST for public clients, gRPC between services). Record a protocol choice that is new to the project in `decisions.md` in Step 7.
 
-#### REST
-- **When**: Standard CRUD, web/mobile consumers, team familiarity
-- **Pros**: Wide tooling, HTTP caching, predictable, easy to debug
-- **Cons**: Over/under-fetching, multiple round trips for complex data
+Output: the protocol per consumer group, with a one-line reason.
 
-#### GraphQL
-- **When**: Complex data needs, mobile apps, multiple consumers with different needs
-- **Pros**: Flexible queries, single endpoint, type system, no over-fetching
-- **Cons**: Complexity, caching challenges, N+1 queries, learning curve
+### Step 4: Design resources and endpoints
 
-#### gRPC
-- **When**: Microservices, high performance, internal services
-- **Pros**: Fast (binary), bi-directional streaming, code generation, type safety
-- **Cons**: Browser support limited, learning curve, harder to debug
+Apply `references/rest-conventions.md` (naming, methods, status codes, pagination, casing). For GraphQL use `references/graphql.md`; for gRPC use `references/grpc.md`.
 
-### Step 3: Resource Design
+For every endpoint or operation, define:
 
-#### REST Resources
+1. Method and path (or query/mutation, or RPC).
+2. Path, query and header parameters, with types and limits.
+3. Request body schema, as an explicit allowlist of client-writable fields. Server-owned fields (`id`, `role`, `ownerId`, `createdAt`, status set by workflows) are never accepted from the body.
+4. Response schema. Never return secrets, password hashes, tokens or internal fields; return PII only when the consumer needs it.
+5. Error responses, using the project's error format (`references/errors.md`).
+6. Access rule: who may call it, plus the ownership or tenant check for any `/{id}` resource.
+7. Limits: maximum body size, maximum page size, string lengths, array lengths.
+8. Retry safety: whether it is idempotent; for critical POSTs (payments, orders) require an `Idempotency-Key` header.
+9. Caching: `Cache-Control` for the response. Authenticated responses default to `private, no-store`.
 
-Use these naming conventions:
-- **Nouns, plural, lowercase**: `/users`, `/orders`, `/products`
-- **Nested resources**: `/users/:id/orders`
-- **Actions as sub-resources**: `/orders/:id/cancel`
-- **Kebab-case for multi-word**: `/team-members`, `/order-items`
+Feature-specific patterns (file upload, real-time, search, bulk, long-running jobs, inbound webhooks, user-supplied URLs) are in `references/feature-patterns.md`.
 
-```
-GET    /api/v1/users              # List users
-GET    /api/v1/users/:id          # Get user
-POST   /api/v1/users              # Create user
-PUT    /api/v1/users/:id          # Replace user
-PATCH  /api/v1/users/:id          # Update user
-DELETE /api/v1/users/:id          # Delete user
-GET    /api/v1/users/:id/orders   # Get user's orders
-POST   /api/v1/orders/:id/cancel  # Cancel order
-```
+Output: an endpoint table with the nine items above for each endpoint.
 
-#### GraphQL Types
+### Step 5: Set cross-cutting conventions
 
-```graphql
-type User {
-  id: ID!
-  email: String!
-  name: String!
-  createdAt: DateTime!
-  posts(first: Int, after: String): PostConnection!
-}
+Decide once per API and reuse the existing choice when there is one:
 
-type Query {
-  users(first: Int, after: String, filter: UserFilter): UserConnection!
-  user(id: ID!): User
-}
+- Error format and error codes: `references/errors.md`.
+- Pagination style (cursor or offset) and JSON field casing: `references/rest-conventions.md`.
+- Versioning scheme, breaking-change rules and deprecation: `references/versioning.md`.
+- Rate limit response: 429 with `Retry-After` (algorithm and store are an ops concern; flag them for `backend-ops`).
 
-type Mutation {
-  createUser(input: CreateUserInput!): User!
-  updateUser(id: ID!, input: UpdateUserInput!): User!
-  deleteUser(id: ID!): Boolean!
-}
-```
+Output: a short conventions list that goes into `api-patterns.md`.
 
-### Step 4: Endpoint Design
+### Step 6: Present the design and write the contract
 
-For each endpoint, define:
-- HTTP method and path
-- Request parameters (path, query, body)
-- Request body schema
-- Response schema
-- Error responses
-- Authentication required
+1. Present the endpoint table, schemas, error format, access rules and conventions. If Step 1 or Step 2 left open questions, or in `mode=interactive`, wait for approval. In `mode=auto`, continue and list any assumptions in the final report.
+2. Start a checkpoint before the first edit: `node <shared>/scripts/checkpoint.js start --skill backend-api-design --feature <slug>`. Record each file you create or edit (`checkpoint.js record`), snapshot after each step, and close it when done. If the start exits with code 3, an open checkpoint exists: offer to resume it or restart. If Node is unavailable, follow `<shared>/tool-rules.md` -> Concurrent & Partial Work by hand.
+3. Write the contract:
+   - REST: extend the existing spec, or create `docs/api/openapi.yaml` from `references/openapi-template.md`.
+   - GraphQL: the existing schema file, or `docs/api/schema.graphql`.
+   - gRPC: the existing proto tree, or `proto/<package>/v1/<service>.proto`.
+4. Validate the contract:
+   - Every `$ref` resolves, every operation has an `operationId`, every protected operation has `security`, and every error response has a schema.
+   - Run a spec linter only if it is already available in the project (for example Spectral or Redocly CLI for OpenAPI, `buf lint` for proto). Installing one is a dependency install and needs approval first (see `<shared>/tool-rules.md` -> Always Ask First). If none is available, do the checks above by reading the file.
+   - Cross-check field names and types against `db-schema.md`. List any field that has no backing column or derivation, and any table the design needs that does not exist yet.
+   - If an existing contract changed, classify each change as additive or breaking (`references/versioning.md`). A breaking change needs explicit user approval and a version or deprecation plan.
 
-#### Request/Response Schemas
+Output: the written contract file, lint or manual-check results, and the db-schema gap list.
 
-```typescript
-// Create user request
-interface CreateUserRequest {
-  email: string;      // required, valid email
-  password: string;   // required, min 8 chars
-  name: string;       // required, 1-100 chars
-}
+### Step 7: Update memory
 
-// User response
-interface User {
-  id: string;
-  email: string;
-  name: string;
-  createdAt: string;  // ISO timestamp
-}
+Update `.opencode/everything-backend-memory/` using the formats in `<shared>/memory-schema.md`:
 
-// Error response
-interface ErrorResponse {
-  error: {
-    code: string;         // e.g., "validation_error"
-    message: string;      // Human-readable
-    details?: FieldError[]; // For validation errors
-  };
-}
+- `api-patterns.md`: Protocol, Base Path, Authentication (the requirement per endpoint family; the mechanism comes from `backend-auth`), Conventions (casing, pagination, error shape, versioning), Error Codes, Rate Limiting, and the Endpoints inventory. The inventory is append-only; mark removed endpoints deprecated.
+- `decisions.md`: one entry per new decision (protocol, versioning scheme, error format, design-first vs code-first), with context and consequences.
 
-interface FieldError {
-  field: string;
-  message: string;
-  code: string;  // e.g., "invalid_format"
-}
-```
+Record each memory file in the checkpoint (`checkpoint.js record --memory <file>`), then close it (`checkpoint.js close --skill backend-api-design --feature <slug>`).
 
-### Step 5: OpenAPI/Swagger Spec
+### Step 8: Hand off
 
-Generate OpenAPI 3.0 specification:
+State the next skill and what it consumes:
 
-```yaml
-openapi: 3.0.0
-info:
-  title: API Title
-  version: 1.0.0
-paths:
-  /api/v1/users:
-    get:
-      summary: List users
-      parameters:
-        - name: page
-          in: query
-          schema:
-            type: integer
-            default: 1
-        - name: per_page
-          in: query
-          schema:
-            type: integer
-            default: 20
-            maximum: 100
-      responses:
-        '200':
-          description: Success
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/User'
-                  meta:
-                    $ref: '#/components/schemas/Pagination'
-    post:
-      summary: Create user
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateUser'
-      responses:
-        '201':
-          description: Created
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    $ref: '#/components/schemas/User'
-        '422':
-          description: Validation error
-components:
-  schemas:
-    User:
-      type: object
-      properties:
-        id: { type: string }
-        email: { type: string }
-        name: { type: string }
-        createdAt: { type: string, format: date-time }
-```
+- `backend-auth`: the auth mechanism and login, refresh, logout and password endpoints, when the design needs auth and none is recorded yet.
+- `backend-db-design`: tables or columns from the db-schema gap list.
+- `backend-implement`: builds the endpoints from the contract file and the endpoint table.
+- `backend-test`: contract tests against the spec (status codes, error shapes, access rules).
+- `backend-security`: review before a public or third-party launch.
 
-### Step 6: User Confirmation
+## Output
 
-Present API design:
+- The contract file (spec, schema or proto) at the path chosen in Step 2.
+- A summary: endpoints added or changed, breaking changes (if any), open questions, db-schema gaps, and the next skill.
+- Updated `api-patterns.md` and, for new decisions, `decisions.md`.
 
-- Show endpoint list
-- Show request/response schemas
-- Show error response format
-- Show authentication method
-- Show OpenAPI spec
-
-Ask:
-- "Does this API design meet your needs?"
-- "Any missing endpoints?"
-- "Any fields to add/remove?"
-- "Should I save this to api-patterns.md memory?"
-
-## Decision Trees
-
-### If user authentication needed:
-- POST /auth/register - Create account
-- POST /auth/login - Get token
-- POST /auth/refresh - Refresh token
-- POST /auth/logout - Invalidate token
-- GET /auth/me - Current user
-- Define RBAC/permission requirements per endpoint family
-- Define audit logging for admin actions and sensitive state changes
-
-### If pagination needed:
-- Use cursor-based for large datasets (>10K items)
-- Use offset-based for admin dashboards
-- Include: page, per_page, total, has_next
-- Add Link headers for HATEOAS
-
-### If file upload needed:
-- POST /upload (multipart/form-data)
-- Consider presigned URLs for S3/cloud storage
-- Define file size limits (e.g., max 10MB)
-- Validate file types server-side
-- Return file URL/ID in response
-
-### If real-time needed:
-- WebSocket endpoint: /ws
-- GraphQL subscriptions
-- Server-Sent Events: /events
-- Consider connection authentication
-
-### If search needed:
-- GET /resources?q=searchterm
-- Support filters and sorting
-- Use full-text search index
-- Return relevance scores
-
-## Templates
-
-### REST Endpoint Template
-```
-# Resource endpoints
-GET    /api/v1/{resource}           # List (with pagination)
-GET    /api/v1/{resource}/:id       # Get one
-POST   /api/v1/{resource}           # Create
-PUT    /api/v1/{resource}/:id       # Replace
-PATCH  /api/v1/{resource}/:id       # Update
-DELETE /api/v1/{resource}/:id       # Delete
-
-# Nested resources
-GET    /api/v1/{parent}/:id/{resource}
-POST   /api/v1/{parent}/:id/{resource}
-
-# Actions
-POST   /api/v1/{resource}/:id/{action}
-```
-
-### Error Response Template
-```json
-{
-  "error": {
-    "code": "validation_error",
-    "message": "Request validation failed",
-    "details": [
-      {
-        "field": "email",
-        "message": "Must be a valid email address",
-        "code": "invalid_format"
-      }
-    ]
-  }
-}
-```
-
-### Standard Error Codes
-| HTTP | Code | Meaning |
-|------|------|---------|
-| 200 | - | Success |
-| 201 | - | Created |
-| 204 | - | No Content |
-| 400 | bad_request | Malformed request |
-| 401 | unauthorized | Missing/invalid auth |
-| 403 | forbidden | Authenticated but not authorized |
-| 404 | not_found | Resource doesn't exist |
-| 409 | conflict | Duplicate, state conflict |
-| 422 | validation_error | Validation failed |
-| 429 | rate_limit_exceeded | Too many requests |
-| 500 | internal_error | Server error |
+Done when:
+- The contract file exists and passes the Step 6 validation (no dangling refs, every operation has an access rule and error responses).
+- Every endpoint in the contract appears in the `api-patterns.md` inventory.
+- Breaking changes are either approved with a migration plan or removed.
+- The checkpoint is closed and the handoff is stated.
 
 ## Edge Cases
 
-- **No clear resources**: Ask user for examples, start with core CRUD
-- **Complex relationships**: Use nested resources, consider GraphQL for flexibility
-- **Multiple consumers**: Consider API versioning, different rate limits
-- **High traffic**: Implement rate limiting, caching, pagination
-- **Sensitive data**: Never return passwords, tokens, PII unless required
-- **Legacy API**: Document migration path, support both versions temporarily
+- No clear resources: ask for two or three concrete user actions and derive resources from them; start with core CRUD.
+- Complex relationships: nest one level at most (`/users/{id}/orders`); link deeper relations by ID, or consider GraphQL.
+- Multiple consumers with different needs: one contract with field selection or separate read models, not one API per client. Give each consumer class its own rate limit tier if their traffic differs.
+- High traffic: cursor pagination, caching headers on public reads, and a rate limit per consumer; flag capacity work for `backend-ops`.
+- Legacy API: document the migration path and run both versions in parallel until the sunset date (`references/versioning.md`).
+- Auth endpoints requested here: design only their place in the inventory and hand the mechanism to `backend-auth`.
+
+## References
+
+- `references/rest-conventions.md`: read when designing REST paths, methods, status codes, pagination, casing, PATCH semantics, concurrency (ETag/If-Match), caching or idempotency keys.
+- `references/errors.md`: read when defining the error format, error codes, or headers on 401, 429 and 503.
+- `references/openapi-template.md`: read when creating a new OpenAPI spec or checking that an existing one is complete.
+- `references/versioning.md`: read when choosing a versioning scheme, changing an existing endpoint, or deprecating one.
+- `references/feature-patterns.md`: read when the feature includes file upload, real-time (WebSocket/SSE), search, bulk operations, long-running jobs, inbound webhooks or user-supplied URLs.
+- `references/graphql.md`: read when the protocol is GraphQL.
+- `references/grpc.md`: read when the protocol is gRPC or the contract is a `.proto` file.

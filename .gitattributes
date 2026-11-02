@@ -1,0 +1,9 @@
+* text=auto eol=lf
+
+# Binary files: never normalize line endings
+*.zip binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary

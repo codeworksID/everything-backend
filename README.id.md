@@ -7,68 +7,118 @@
 >
 > [![GitHub issues](https://img.shields.io/github/issues/codeworksID/everything-backend)](../../issues) [![good first issue](https://img.shields.io/github/issues/codeworksID/everything-backend/good%20first%20issue?color=7057ff&label=good%20first%20issue)](../../issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22) [![help wanted](https://img.shields.io/github/issues/codeworksID/everything-backend/help%20wanted?color=008672&label=help%20wanted)](../../issues?q=is%3Aopen+is%3Aissue+label%3A%22help+wanted%22)
 
-Skill backend Opencode yang dapat digunakan kembali, mencakup penemuan proyek, arsitektur, desain basis data, desain API, implementasi, pengujian, autentikasi, operasi, deployment, migrasi, visualisasi, pemeriksaan kesehatan, dan penyegaran memori.
+Skill rekayasa backend untuk agen AI coding: penemuan proyek, arsitektur, desain basis data, migrasi, desain API, autentikasi, implementasi, refactoring, pengujian, debugging, review keamanan, pemeriksaan kesehatan, operasi, deployment, dan diagram. Skill ini berjalan di **Claude Code**, **Claude.ai**, **OpenCode / OMO**, **Cursor**, dan **Antigravity**.
 
 ## Skill yang tersedia
 
-- `backend-orchestrator` — mengarahkan permintaan ke skill backend yang tepat
-- `backend-scan` — mengeksplorasi proyek yang sudah ada dan menyinkronkan file memori
-- `backend-architect` — merancang arsitektur backend dan pemilihan tech stack
-- `backend-db-design` — merancang skema basis data dan rencana migrasi
-- `backend-visualize` — menghasilkan diagram Mermaid yang indah (ERD, class, actor, flowchart, sequence, architecture)
-- `backend-api-design` — merancang endpoint API dan kontraknya
-- `backend-implement` — membuat atau memodifikasi kode backend
-- `backend-refactor` — refactoring tanpa mengubah perilaku: memecah controller/service yang gemuk, mengekstrak modul, mengurangi coupling, strangler fig, memodernisasi kode legacy
-- `backend-test` — merancang tes, fixture, mock, dan cakupan (coverage)
-- `backend-auth` — merancang dan mengimplementasikan autentikasi serta otorisasi
-- `backend-ops` — logging, metrics, tracing, caching, async messaging, dan konfigurasi
-- `backend-deploy` — container, docker-compose, CI/CD, dan health probe
-- `backend-migrate` — evolusi skema, backfill, dan migrasi zero-downtime
-- `backend-doctor` — menjalankan pemeriksaan kesehatan dan review berbasis eksekusi
+- `backend-orchestrator`: mengarahkan permintaan ke skill backend yang tepat dan menjalankan alur kerja multi-langkah
+- `backend-scan`: mengeksplorasi proyek yang sudah ada dan menjaga file memori tetap sinkron
+- `backend-architect`: merencanakan arsitektur dan tech stack, serta menulis `docs/architecture/overview.md` dan ADR
+- `backend-db-design`: merancang skema basis data dan rencana migrasi
+- `backend-visualize`: menghasilkan diagram Mermaid bertema (ERD, class, actor, flowchart, sequence, architecture)
+- `backend-api-design`: merancang endpoint API dan kontraknya
+- `backend-implement`: membangun fitur baru dan mengembangkan kode yang sudah ada
+- `backend-refactor`: refactoring tanpa mengubah perilaku, seperti memecah controller atau service yang gemuk, mengekstrak modul, mengurangi coupling, strangler fig, dan memodernisasi kode legacy
+- `backend-debug`: memperbaiki bug dengan mereproduksi bug, menulis tes yang gagal, menemukan akar masalah, membuat perbaikan minimal, dan menambahkan tes regresi
+- `backend-test`: merancang tes, fixture, mock, dan cakupan (coverage)
+- `backend-auth`: merancang dan mengimplementasikan autentikasi serta otorisasi
+- `backend-security`: review keamanan yang mencakup threat modeling, OWASP API Top 10, pemindaian secret, SAST, dan pemeriksaan supply chain
+- `backend-ops`: logging, metrics, tracing, caching, async messaging, konfigurasi, pola resiliensi, serta backup/restore/DR
+- `backend-deploy`: container, CI/CD, Kubernetes, strategi rilis, rollback, dan langkah migrasi yang dijaga persetujuan
+- `backend-migrate`: evolusi skema, backfill, dan migrasi zero-downtime (expand/contract)
+- `backend-doctor`: pemeriksaan kesehatan berbasis eksekusi dan review yang dibatasi pada diff
 
-File referensi bersama berada di `.agents/skills/_shared/` dan disertakan dalam instalasi.
+Materi bersama berada di `.agents/skills/_shared/`:
 
-##从哪里开始 / Where to start
+- aturan yang diikuti setiap skill (`tool-rules.md`, `context-loading.md`, `memory-schema.md`, `principles.md`)
+- peta nama tool untuk setiap host (`host-tools.md`)
+- referensi stack (`stacks/postgres.md`, `stacks/node-typescript.md`, `stacks/python-fastapi.md`)
+- skrip penegakan aturan (`scripts/checkpoint.js`, `scripts/guard.js`)
 
-Jika Anda baru mengenal skill-skill ini, coba dalam urutan berikut:
+Setiap skill memiliki `SKILL.md` yang ringkas dan memuat template serta checklist detailnya dari folder `references/` miliknya sendiri hanya saat dibutuhkan.
 
-1. **`backend-orchestrator`** — Tidak yakin skill mana yang sesuai dengan permintaan Anda? Mulai dari sini dan skill ini akan mengarahkan Anda ke yang tepat.
-2. **`backend-scan`** — Arahkan ke repositori backend yang sudah ada untuk menemukan struktur, stack, dan konvensinya.
-3. **`backend-architect`** — Gunakan ini ketika Anda merencanakan layanan baru atau merestrukturisasi layanan yang sudah ada.
-4. **`backend-db-design`** — Rancang tabel, relasi, indeks, dan rencana migrasi sebelum menulis kode (`backend-migrate` yang menulis dan menerapkan file migrasinya).
-5. **`backend-api-design`** — Definisikan endpoint, skema request/response, dan kontrak error.
-6. **`backend-implement`** — Ubah desain menjadi kode yang berfungsi, atau kembangkan kode yang sudah ada.
-7. **`backend-test`** — Tambahkan tes, fixture, mock, dan cakupan (coverage) selanjutnya.
+## Mulai dari mana
 
-Setelah dasar-dasarnya, gunakan skill khusus sesuai kebutuhan:
+1. **`backend-orchestrator`**: mulai dari sini jika Anda tidak yakin skill mana yang sesuai dengan permintaan Anda. Skill ini akan mengarahkan Anda ke skill yang tepat.
+2. **`backend-scan`**: arahkan ke repositori backend yang sudah ada untuk menemukan struktur, stack, dan konvensinya.
+3. **`backend-architect`**: gunakan ini ketika Anda merencanakan layanan baru atau merestrukturisasi layanan yang sudah ada.
+4. **`backend-db-design`**, lalu **`backend-migrate`**: rancang skema terlebih dahulu, lalu tulis dan terapkan migrasi dengan aman.
+5. **`backend-api-design`**, lalu **`backend-implement`**, lalu **`backend-test`**: definisikan kontraknya, bangun, lalu uji.
 
-- **`backend-auth`** — untuk login, signup, JWT, RBAC, dan permissions.
-- **`backend-ops`** — untuk logging, metrics, tracing, caching, dan async messaging.
-- **`backend-deploy`** — untuk Docker, CI/CD, dan setup infrastruktur.
-- **`backend-migrate`** — untuk evolusi skema dan migrasi zero-downtime.
-- **`backend-refactor`** — untuk memecah controller dan service yang gemuk, mengekstrak modul, mengurangi coupling, dan memodernisasi kode legacy tanpa mengubah perilaku.
-- **`backend-doctor`** — untuk health check, linting, type check, dan code review.
-- **`backend-visualize`** — untuk diagram ERD, arsitektur, dan alur.
+Setelah itu, gunakan skill khusus sesuai kebutuhan:
 
-## 安装 / Installation
+- **`backend-debug`** ketika ada yang rusak.
+- **`backend-security`** sebelum rilis.
+- **`backend-auth`** untuk login dan permissions.
+- **`backend-ops`** untuk operasional di production.
+- **`backend-deploy`** untuk pengiriman (shipping).
+- **`backend-refactor`** untuk merapikan kode tanpa mengubah perilaku.
+- **`backend-doctor`** untuk health check.
+- **`backend-visualize`** untuk diagram.
 
-Jalankan installer menggunakan `npx`:
+## Instalasi
+
+### Claude Code (direkomendasikan: plugin dengan guard hook)
+
+Di dalam Claude Code:
+
+```text
+/plugin marketplace add codeworksID/everything-backend
+/plugin install everything-backend@codeworks
+```
+
+Plugin ini menginstal semua skill beserta guard hook `PreToolUse`. Hook ini membuat Claude bertanya terlebih dahulu sebelum menjalankan salah satu dari hal berikut:
+
+- perintah git yang destruktif (`reset --hard`, `clean -f`, `checkout -- <path>`, force push)
+- perintah apply, reset, atau drop migrasi
+- SQL yang destruktif
+- perintah deploy dan infrastruktur (`kubectl apply`, `helm upgrade`, `terraform apply`, `docker push`)
+- penghapusan rekursif
+- pengeditan file rahasia (`.env`, key)
+
+Untuk mengatur hook:
+
+- Setel `EVERYTHING_BACKEND_GUARD=off` untuk menonaktifkannya.
+- Setel `EVERYTHING_BACKEND_GUARD=strict` agar juga bertanya sebelum commit, push, dan instalasi dependensi.
+
+Anda juga dapat menginstal skill sebagai skill Claude Code biasa, tanpa hook:
+
+```bash
+npx everything-backend --host claude
+```
+
+Perintah itu menyalinnya ke `~/.claude/skills`. Untuk satu proyek saja, jalankan `npx everything-backend`, pilih **Per-project**, lalu pilih layout `.claude/skills`.
+
+### Claude.ai
+
+Buat satu zip mandiri per skill (setiap zip membawa salinan `_shared/` miliknya sendiri):
+
+```bash
+git clone https://github.com/codeworksID/everything-backend.git
+cd everything-backend
+npm run build:claude
+```
+
+Lalu unggah setiap `dist/claude-skills/<skill>.zip` di **Settings > Capabilities > Skills**. Code execution harus diaktifkan agar skrip dapat berjalan.
+
+### OpenCode, Cursor, Antigravity
 
 ```bash
 npx everything-backend
 ```
 
-Installer akan berjalan secara interaktif dan meminta Anda memilih:
+Installer akan meminta Anda memilih:
 
-1. **Global** — Menginstal skill sebagai plugin IDE/aplikasi global. Anda akan diminta memilih aplikasi target:
-   - **Antigravity (Gemini IDE)** — `~/.gemini/config/plugins/everything-backend-plugin`
-   - **Cursor** — `~/.cursor/skills`
-   - **Opencode / generic** — `~/.agents/skills`
-2. **Per-project** — Meminta path direktori proyek Anda dan menginstal skill secara lokal di dalam `<project-path>/.agents/skills/`.
+1. **Global**: menginstal untuk satu aplikasi.
+   - **Claude Code**: `~/.claude/skills`
+   - **Antigravity (Gemini IDE)**: `~/.gemini/config/plugins/everything-backend-plugin`
+   - **Cursor**: `~/.cursor/skills`
+   - **OpenCode / generic**: `~/.agents/skills`
+2. **Per-project**: meminta path proyek Anda dan sebuah layout. Layout-nya adalah `<project>/.agents/skills/` (OpenCode, Cursor, generic) atau `<project>/.claude/skills/` (Claude Code).
 
-### 安装替代方案 / Alternative / Manual installation
+Untuk menegakkan aturan "tanya dulu" di OpenCode, lihat cuplikan permission `opencode.json` di `_shared/host-tools.md`.
 
-Jika Anda lebih suka mengkloning dan menginstal secara lokal:
+### Instalasi manual
 
 ```bash
 git clone https://github.com/codeworksID/everything-backend.git
@@ -76,84 +126,88 @@ cd everything-backend
 node scripts/install.js
 ```
 
-### 高级选项 / Advanced Options
+#### Flag
 
-Anda dapat melewati prompt interaktif dengan menentukan path `--target`:
-
-```bash
-npx everything-backend --target /path/to/project/.agents/skills
-```
-
-#### 可用标志 / Available flags
-
-- `--dry-run` — menampilkan apa yang akan disalin tanpa menulis file
-- `--force` — menimpa skill yang sudah terinstal
-- `--target <path>` — path tujuan khusus (melewati prompt interaktif)
-
-#### 示例 / Examples
+- `--host <claude|antigravity|cursor|opencode>`: instalasi global untuk satu host, tanpa prompt
+- `--target <path>`: path tujuan khusus; melewati prompt dan mengesampingkan `--host`
+- `--dry-run`: menampilkan apa yang akan disalin tanpa menulis file
+- `--force`: menimpa skill yang sudah terinstal
 
 ```bash
-node scripts/install.js --dry-run
-node scripts/install.js --target "C:\Users\you\Documents\GitHub\my-project\.agents/skills"
+node scripts/install.js --dry-run --host claude
+node scripts/install.js --target "C:\Users\you\Documents\GitHub\my-project\.claude\skills"
 ```
 
-## 安装内容 / What gets installed
+## Apa yang diinstal
 
-Installer menyalin setiap folder skill dari `.agents/skills/` beserta folder bersama `_shared/` ke target yang Anda pilih. Skill mencari `_shared/` di samping foldernya sendiri, jadi keduanya selalu berada bersama.
+Installer menyalin setiap folder skill dari `.agents/skills/` beserta folder bersama `_shared/` ke target. Skill mencari `_shared/` di dalam foldernya sendiri terlebih dahulu, lalu di sampingnya, jadi folder-folder tersebut harus tetap berada bersama.
 
 | Target | Skill diinstal sebagai | File tambahan |
 |---|---|---|
+| Claude Code plugin | dikelola oleh `/plugin` | guard hook (`hooks/hooks.json`) |
+| Claude Code skills | `~/.claude/skills/<skill-name>/SKILL.md` | tidak ada |
+| Claude.ai | satu zip yang diunggah per skill, dengan `_shared/` di dalamnya | tidak ada |
 | Antigravity (Gemini IDE) | `~/.gemini/config/plugins/everything-backend-plugin/skills/<skill-name>/SKILL.md` | `plugin.json` (name, version) |
-| Cursor | `~/.cursor/skills/<skill-name>/SKILL.md` | — |
-| Opencode / generic | `~/.agents/skills/<skill-name>/SKILL.md` | — |
-| Per-project | `<project-path>/.agents/skills/<skill-name>/SKILL.md` | — |
-| `--target <path>` | `<path>/<skill-name>/SKILL.md` | — |
+| Cursor | `~/.cursor/skills/<skill-name>/SKILL.md` | tidak ada |
+| OpenCode / generic | `~/.agents/skills/<skill-name>/SKILL.md` | tidak ada |
+| Per-project | `<project>/.agents/skills/` atau `<project>/.claude/skills/` | tidak ada |
+| `--target <path>` | `<path>/<skill-name>/SKILL.md` | tidak ada |
 
-`_shared/` selalu ditempatkan di samping folder skill (misalnya `~/.agents/skills/_shared/`). Folder skill yang sudah ada dilewati kecuali Anda memberikan `--force`.
-
-## Opencode 中的使用 / Usage in Opencode
-
-Setelah instalasi, skill tersedia berdasarkan nama. Contoh:
-
-- `backend-orchestrator` — mengarahkan permintaan backend ke sub-skill yang tepat
-- `backend-scan` — memeriksa codebase backend yang sudah ada dan menjaga memori tetap terbaru
-- `backend-api-design` — merancang endpoint dan skema
-- `backend-visualize` — menggambar ERD, class diagram, diagram arsitektur, dan lainnya
-- `backend-implement` — mengubah desain menjadi kode
-- `backend-refactor` — merestrukturisasi kode yang ada tanpa mengubah perilaku
-- `backend-test` — menambah atau memperluas tes
-- `backend-auth` — menambah autentikasi dan otorisasi
-- `backend-doctor` — menjalankan health check backend
+Installer melewati folder skill yang sudah ada kecuali Anda memberikan `--force`.
 
 ## Apa yang dilakukan skill di proyek Anda
 
-- **File memori**: skill menulis memori proyek (overview, tech stack, keputusan, issue terbuka) ke `.opencode/everything-backend-memory/` di proyek Anda, serta checkpoint dan patch run ke `.opencode/everything-backend-memory/.checkpoints/`. Tambahkan folder checkpoint ke `.gitignore`.
-- **Mode auto adalah default**: agen membaca kode dan menjalankan perintah lokal yang hermetis (lint, type-check, build, unit test, audit dependensi read-only) tanpa bertanya.
-- **Agen selalu bertanya dulu** sebelum menerapkan migrasi atau mengubah basis data; git commit, pindah branch, reset, clean, stash, rebase, merge, atau push; menghapus atau menimpa file yang tidak dibuatnya; menginstal, meng-upgrade, atau menghapus dependensi; deploy, push image, IaC apply, rotasi secret, atau panggilan API eksternal berbayar; mengedit file CI/CD atau file rahasia; serta menjalankan tes atau aplikasi terhadap basis data, queue, atau layanan yang tidak terbukti lokal. Agen tidak pernah melewati atau melemahkan tes yang gagal agar lulus.
-- **Mode interaktif**: katakan "ask me before each step" untuk menyetujui setiap langkah sendiri.
+- **File memori.** Skill menulis memori proyek (overview, tech stack, keputusan, issue terbuka, strategi pengujian, rencana deployment) ke `.opencode/everything-backend-memory/`. Folder ini tetap memakai nama tersebut di setiap host, demi kompatibilitas. Checkpoint dan patch disimpan di `.opencode/everything-backend-memory/.checkpoints/`. Tambahkan folder `.checkpoints/` ke `.gitignore`, atau seluruh folder memori jika Anda tidak ingin meng-commit memori.
+- **Deliverable.** Beberapa skill menulis dokumen ke dalam proyek Anda:
+  - dokumen arsitektur dan ADR (`docs/architecture/`, `docs/adr/`)
+  - review keamanan (`docs/security/`)
+  - runbook (`docs/runbooks/`)
+- **Checkpoint dan undo.** Skill yang mengedit kode mencatat setiap run dengan `_shared/scripts/checkpoint.js`. Anda dapat membatalkan sebuah run dengan menerapkan kebalikan dari patch run tersebut. Rollback tidak pernah memakai `git checkout --`, `reset --hard`, atau `clean`, sehingga editan Anda sendiri tetap aman.
+- **Mode auto adalah default.** Agen membaca kode dan menjalankan perintah lokal yang hermetis tanpa bertanya. Ini mencakup lint, type-check, build, unit test, dan audit dependensi read-only.
+- **Agen selalu bertanya dulu** sebelum melakukan salah satu dari hal berikut:
+  - menerapkan migrasi atau mengubah basis data
+  - git commit, pindah branch, reset, clean, stash, rebase, merge, atau push
+  - menghapus atau menimpa file yang tidak dibuatnya
+  - menginstal, meng-upgrade, atau menghapus dependensi
+  - deploy, push image, IaC apply, rotasi secret, atau panggilan API eksternal berbayar
+  - mengedit file CI/CD atau file rahasia
+  - menjalankan tes atau aplikasi terhadap basis data, queue, atau layanan yang tidak terbukti lokal
+- **Agen tidak pernah melewati atau melemahkan tes yang gagal** agar lulus.
+- **Mode interaktif.** Katakan "ask me before each step" untuk menyetujui setiap langkah sendiri.
 
-## 开发 / Development
-
-Untuk menguji installer tanpa menyentuh direktori global Anda yang sebenarnya:
+## Pengembangan
 
 ```bash
+npm run check          # package, frontmatter, references, fences, plugin manifest
+npm test               # guard.js and checkpoint.js tests
+npm run build:claude   # Claude.ai zips in dist/claude-skills/
 node scripts/install.js --dry-run --target ./tmp-skills
-node scripts/install.js --target ./tmp-skills --force
-rm -rf ./tmp-skills   # hapus hasil instalasi uji; jangan di-commit
-npm run check
 ```
 
-`npm run check` (juga dijalankan saat `prepublishOnly`) memverifikasi bahwa path `bin` dan `files` ada, setiap skill memiliki frontmatter yang valid, setiap skill tercantum di `README.md` dan di `backend-orchestrator`, dan setiap file `_shared/` yang dirujuk ada.
+`npm run check` dan `npm test` keduanya dijalankan saat `prepublishOnly`. `npm run check` memverifikasi hal-hal berikut:
 
-## 仓库布局 / Repository layout
+- path `bin`/`files` ada
+- frontmatter valid untuk Claude: nama cocok dengan folder, dan deskripsi paling banyak 1024 karakter tanpa tanda kurung sudut
+- setiap skill tercantum di README ini dan di `backend-orchestrator`
+- setiap file `_shared/` dan `references/` yang dirujuk ada
+- code fence seimbang
+- versi manifest plugin cocok dengan `package.json`
+
+## Struktur repositori
 
 ```text
-.agents/skills/            Definisi skill (satu folder per skill)
-.agents/skills/_shared/    Dokumen referensi bersama untuk semua skill
-scripts/install.js         Installer NPX/lokal
-scripts/check-package.js   Pemeriksaan konsistensi paket dan skill (npm run check)
-docs/                      Laporan audit
-.github/                   Template issue dan pull request
+.agents/skills/<skill>/SKILL.md      Skill entry points (one folder per skill)
+.agents/skills/<skill>/references/   Detail loaded on demand
+.agents/skills/_shared/              Shared rules, host tool map, stack references
+.agents/skills/_shared/scripts/      checkpoint.js and guard.js
+.claude-plugin/                      Claude Code plugin manifest and marketplace
+hooks/                               Claude Code guard hook
+scripts/install.js                   NPX/local installer
+scripts/build-claude-skills.js       Claude.ai zip builder
+scripts/check-package.js             Consistency check (npm run check)
+scripts/test-scripts.js              Script tests (npm test)
+docs/                                Audit reports
+.github/                             Issue and pull request templates
 ```
 
 `.opencode/` bukan bagian dari repositori ini: skill membuat `.opencode/everything-backend-memory/` di dalam proyek Anda saat dijalankan.

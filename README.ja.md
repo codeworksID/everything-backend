@@ -7,68 +7,118 @@
 >
 > [![GitHub issues](https://img.shields.io/github/issues/codeworksID/everything-backend)](../../issues) [![good first issue](https://img.shields.io/github/issues/codeworksID/everything-backend/good%20first%20issue?color=7057ff&label=good%20first%20issue)](../../issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22) [![help wanted](https://img.shields.io/github/issues/codeworksID/everything-backend/help%20wanted?color=008672&label=help%20wanted)](../../issues?q=is%3Aopen+is%3Aissue+label%3A%22help+wanted%22)
 
-再利用可能な Opencode バックエンド向けスキル集。プロジェクトの発見、アーキテクチャ、データベース設計、API 設計、実装、テスト、認証、運用、デプロイ、マイグレーション、可視化、ヘルスチェック、メモリの更新までをカバーします。
+AI コーディングエージェント向けのバックエンドエンジニアリングスキル集です。プロジェクトの発見、アーキテクチャ、データベース設計、マイグレーション、API 設計、認証、実装、リファクタリング、テスト、デバッグ、セキュリティレビュー、ヘルスチェック、運用、デプロイ、図の作成までをカバーします。**Claude Code**、**Claude.ai**、**OpenCode / OMO**、**Cursor**、**Antigravity** で動作します。
 
 ## 含まれるスキル
 
-- `backend-orchestrator` — 適切なバックエンドスキルへリクエストを振り分ける
-- `backend-scan` — 既存プロジェクトを探索し、メモリファイルを同期する
-- `backend-architect` — バックエンドのアーキテクチャと技術スタックを設計する
-- `backend-db-design` — データベーススキーマとマイグレーション計画を設計する
-- `backend-visualize` — 美しい Mermaid 図（ERD、クラス、アクター、フローチャート、シーケンス、アーキテクチャ）を生成する
-- `backend-api-design` — API エンドポイントと契約を設計する
-- `backend-implement` — バックエンドのコードを生成・修正する
-- `backend-refactor` — 振る舞いを変えないリファクタリング：肥大化した controller/service の分割、モジュール抽出、結合度の低減、ストラングラーフィグ、レガシーの近代化
-- `backend-test` — テスト、fixture、mock、カバレッジを設計する
-- `backend-auth` — 認証と認可を設計・実装する
-- `backend-ops` — ログ、メトリクス、トレーシング、キャッシュ、非同期メッセージング、設定
-- `backend-deploy` — コンテナ、docker-compose、CI/CD、ヘルスプローブ
-- `backend-migrate` — スキーマの進化、バックフィル、ゼロダウンタイムマイグレーション
-- `backend-doctor` — 実行ベースのヘルスチェックとレビューを実行する
+- `backend-orchestrator`：適切なバックエンドスキルへリクエストを振り分け、複数ステップのワークフローを実行する
+- `backend-scan`：既存プロジェクトを探索し、メモリファイルを同期する
+- `backend-architect`：アーキテクチャと技術スタックを計画し、`docs/architecture/overview.md` と ADR を作成する
+- `backend-db-design`：データベーススキーマとマイグレーション計画を設計する
+- `backend-visualize`：テーマ付きの Mermaid 図（ERD、クラス、アクター、フローチャート、シーケンス、アーキテクチャ）を生成する
+- `backend-api-design`：API エンドポイントと契約を設計する
+- `backend-implement`：新機能を構築し、既存コードを発展させる
+- `backend-refactor`：振る舞いを変えないリファクタリング。肥大化した controller や service の分割、モジュール抽出、結合度の低減、ストラングラーフィグ、レガシーコードの近代化など
+- `backend-debug`：バグを再現し、失敗するテストを書き、根本原因を特定し、最小限の修正を行い、回帰テストを追加することでバグを修正する
+- `backend-test`：テスト、fixture、mock、カバレッジを設計する
+- `backend-auth`：認証と認可を設計・実装する
+- `backend-security`：脅威モデリング、OWASP API Top 10、シークレットスキャン、SAST、サプライチェーンのチェックを含むセキュリティレビュー
+- `backend-ops`：ログ、メトリクス、トレーシング、キャッシュ、非同期メッセージング、設定、レジリエンスパターン、バックアップ/リストア/DR
+- `backend-deploy`：コンテナ、CI/CD、Kubernetes、リリース戦略、ロールバック、承認制のマイグレーションステップ
+- `backend-migrate`：スキーマの進化、バックフィル、ゼロダウンタイム（expand/contract）マイグレーション
+- `backend-doctor`：実行ベースのヘルスチェックと、差分を対象にしたレビュー
 
-共有の参照ファイルは `.agents/skills/_shared/` にあり、インストールに含まれます。
+共有の資料は `.agents/skills/_shared/` にあります。
+
+- すべてのスキルが従うルール（`tool-rules.md`、`context-loading.md`、`memory-schema.md`、`principles.md`）
+- ホストごとのツール名の対応表（`host-tools.md`）
+- スタック別リファレンス（`stacks/postgres.md`、`stacks/node-typescript.md`、`stacks/python-fastapi.md`）
+- 強制用スクリプト（`scripts/checkpoint.js`、`scripts/guard.js`）
+
+各スキルは短い `SKILL.md` を持ち、詳細なテンプレートやチェックリストは必要なときにだけ自身の `references/` フォルダから読み込みます。
 
 ## はじめに
 
-これらのスキルがはじめての方は、次の順序でお試しください。
+1. **`backend-orchestrator`**：どのスキルが適切か迷ったらここから。適切なスキルへルーティングします。
+2. **`backend-scan`**：既存のバックエンドリポジトリを対象に指定し、構造・スタック・規約を発見します。
+3. **`backend-architect`**：新規サービスの計画や、既存サービスの再構築を行う際に使用します。
+4. **`backend-db-design`**、続いて **`backend-migrate`**：まずスキーマを設計し、その後マイグレーションを安全に作成・適用します。
+5. **`backend-api-design`**、続いて **`backend-implement`**、さらに **`backend-test`**：契約を定義し、実装し、テストします。
 
-1. **`backend-orchestrator`** — どのスキルが適切か迷ったらここから。適切なスキルへルーティングします。
-2. **`backend-scan`** — 既存のリポジトリを対象に指定し、構造・スタック・規約を発見します。
-3. **`backend-architect`** — 新規サービスの計画や、既存サービスの再構築を行う際に使用します。
-4. **`backend-db-design`** — コードを書く前にテーブル、リレーション、インデックス、マイグレーション計画を設計します（マイグレーションファイルの作成と適用は `backend-migrate` が行います）。
-5. **`backend-api-design`** — エンドポイント、リクエスト/レスポンススキーマ、エラー契約を定義します。
-6. **`backend-implement`** — 設計を動作するコードへ変換するか、既存コードを改良します。
-7. **`backend-test`** — 続いてテスト、fixture、mock、カバレッジを追加します。
+その後は必要に応じて専門スキルを活用してください。
 
-基本を身につけたあとは、必要に応じて専門スキルを活用してください。
-
-- **`backend-auth`** — ログイン、サインアップ、JWT、RBAC、権限関連。
-- **`backend-ops`** — ログ、メトリクス、トレーシング、キャッシュ、非同期メッセージング関連。
-- **`backend-deploy`** — Docker、CI/CD、インフラ構築関連。
-- **`backend-migrate`** — スキーマの進化とゼロダウンタイムマイグレーション関連。
-- **`backend-refactor`** — 肥大化した controller や service の分割、モジュール抽出、結合度の低減、レガシーコードの近代化を、振る舞いを変えずに行う場合。
-- **`backend-doctor`** — ヘルスチェック、lint、型チェック、コードレビュー関連。
-- **`backend-visualize`** — ERD、アーキテクチャ図、フロー図関連。
+- **`backend-debug`**：何かが壊れたとき。
+- **`backend-security`**：リリース前。
+- **`backend-auth`**：ログインと権限関連。
+- **`backend-ops`**：本番環境での運用。
+- **`backend-deploy`**：リリース作業。
+- **`backend-refactor`**：振る舞いを変えずにコードを整理するとき。
+- **`backend-doctor`**：ヘルスチェック。
+- **`backend-visualize`**：図の作成。
 
 ## インストール
 
-`npx` を使ってインストーラを実行します。
+### Claude Code（推奨：ガードフック付きプラグイン）
+
+Claude Code 内で次を実行します。
+
+```text
+/plugin marketplace add codeworksID/everything-backend
+/plugin install everything-backend@codeworks
+```
+
+プラグインはすべてのスキルに加えて `PreToolUse` ガードフックをインストールします。このフックにより、Claude は次のいずれかを実行する前に確認を求めます。
+
+- 破壊的な git コマンド（`reset --hard`、`clean -f`、`checkout -- <path>`、force push）
+- マイグレーションの apply、reset、drop コマンド
+- 破壊的な SQL
+- デプロイおよびインフラ系コマンド（`kubectl apply`、`helm upgrade`、`terraform apply`、`docker push`）
+- 再帰的な削除
+- シークレットファイル（`.env`、鍵）の編集
+
+フックの制御方法：
+
+- `EVERYTHING_BACKEND_GUARD=off` を設定すると無効になります。
+- `EVERYTHING_BACKEND_GUARD=strict` を設定すると、commit、push、依存関係のインストールの前にも確認を求めます。
+
+フックなしで、通常の Claude Code スキルとしてインストールすることもできます。
+
+```bash
+npx everything-backend --host claude
+```
+
+これにより `~/.claude/skills` にコピーされます。単一のプロジェクトに導入する場合は、`npx everything-backend` を実行して **Per-project** を選び、`.claude/skills` レイアウトを選択してください。
+
+### Claude.ai
+
+スキルごとに自己完結した zip をビルドします（各 zip には `_shared/` のコピーが同梱されます）。
+
+```bash
+git clone https://github.com/codeworksID/everything-backend.git
+cd everything-backend
+npm run build:claude
+```
+
+その後、各 `dist/claude-skills/<skill>.zip` を **Settings > Capabilities > Skills** からアップロードします。スクリプトを実行するには、コード実行が有効になっている必要があります。
+
+### OpenCode、Cursor、Antigravity
 
 ```bash
 npx everything-backend
 ```
 
-インストーラは対話的に動作し、次の選択を求めます。
+インストーラは次の選択を求めます。
 
-1. **Global** — スキルをグローバルな IDE/アプリのプラグインとしてインストールします。対象アプリの選択を求められます。
-   - **Antigravity (Gemini IDE)** — `~/.gemini/config/plugins/everything-backend-plugin`
-   - **Cursor** — `~/.cursor/skills`
-   - **Opencode / generic** — `~/.agents/skills`
-2. **Per-project** — プロジェクトのディレクトリパスを尋ね、そのプロジェクト内の `<project-path>/.agents/skills/` にローカルインストールします。
+1. **Global**：1 つのアプリ向けにインストールします。
+   - **Claude Code**：`~/.claude/skills`
+   - **Antigravity (Gemini IDE)**：`~/.gemini/config/plugins/everything-backend-plugin`
+   - **Cursor**：`~/.cursor/skills`
+   - **OpenCode / generic**：`~/.agents/skills`
+2. **Per-project**：プロジェクトのパスとレイアウトを尋ねます。レイアウトは `<project>/.agents/skills/`（OpenCode、Cursor、generic）または `<project>/.claude/skills/`（Claude Code）のいずれかです。
 
-### 代替 / 手動インストール
+OpenCode で「事前に確認する」ルールを強制するには、`_shared/host-tools.md` にある `opencode.json` の permission スニペットを参照してください。
 
-クローンしてローカルにインストールする場合はこちら。
+### 手動インストール
 
 ```bash
 git clone https://github.com/codeworksID/everything-backend.git
@@ -76,84 +126,88 @@ cd everything-backend
 node scripts/install.js
 ```
 
-### 高度なオプション
+#### フラグ
 
-`--target` パスで対話プロンプトをスキップできます。
-
-```bash
-npx everything-backend --target /path/to/project/.agents/skills
-```
-
-#### 利用可能なフラグ
-
-- `--dry-run` — ファイルを書き込まずに、コピー対象の内容のみを表示する
-- `--force` — 既存のインストール済みスキルを上書きする
-- `--target <path>` — 任意の導入先パスを指定する（対話プロンプトをスキップ）
-
-#### 例
+- `--host <claude|antigravity|cursor|opencode>`：1 つのホスト向けにプロンプトなしでグローバルインストールする
+- `--target <path>`：任意の導入先を指定する。プロンプトをスキップし、`--host` より優先される
+- `--dry-run`：ファイルを書き込まずに、コピー対象の内容のみを表示する
+- `--force`：既存のインストール済みスキルを上書きする
 
 ```bash
-node scripts/install.js --dry-run
-node scripts/install.js --target "C:\Users\you\Documents\GitHub\my-project\.agents/skills"
+node scripts/install.js --dry-run --host claude
+node scripts/install.js --target "C:\Users\you\Documents\GitHub\my-project\.claude\skills"
 ```
 
 ## インストールされるもの
 
-インストーラは `.agents/skills/` 配下の各スキルフォルダと共有フォルダ `_shared/` を、選択したインストール先へコピーします。スキルは自身のフォルダの隣にある `_shared/` を参照するため、両者は常に同じ場所に置かれます。
+インストーラは `.agents/skills/` 配下のすべてのスキルフォルダと共有フォルダ `_shared/` を導入先へコピーします。スキルはまず自身のフォルダ内、次にその隣にある `_shared/` を探すため、フォルダは同じ場所にまとめておく必要があります。
 
 | インストール先 | スキルの配置 | 追加ファイル |
 |---|---|---|
+| Claude Code プラグイン | `/plugin` が管理 | ガードフック（`hooks/hooks.json`） |
+| Claude Code スキル | `~/.claude/skills/<skill-name>/SKILL.md` | なし |
+| Claude.ai | スキルごとに 1 つの zip をアップロード（`_shared/` を同梱） | なし |
 | Antigravity (Gemini IDE) | `~/.gemini/config/plugins/everything-backend-plugin/skills/<skill-name>/SKILL.md` | `plugin.json` (name, version) |
-| Cursor | `~/.cursor/skills/<skill-name>/SKILL.md` | — |
-| Opencode / generic | `~/.agents/skills/<skill-name>/SKILL.md` | — |
-| Per-project | `<project-path>/.agents/skills/<skill-name>/SKILL.md` | — |
-| `--target <path>` | `<path>/<skill-name>/SKILL.md` | — |
+| Cursor | `~/.cursor/skills/<skill-name>/SKILL.md` | なし |
+| OpenCode / generic | `~/.agents/skills/<skill-name>/SKILL.md` | なし |
+| Per-project | `<project>/.agents/skills/` または `<project>/.claude/skills/` | なし |
+| `--target <path>` | `<path>/<skill-name>/SKILL.md` | なし |
 
-どの場合も `_shared/` はスキルフォルダの隣に配置されます（例：`~/.agents/skills/_shared/`）。既存のスキルフォルダは `--force` を指定しない限りスキップされます。
-
-## Opencode での使い方
-
-インストール後はスキル名で呼び出せます。例：
-
-- `backend-orchestrator` — バックエンドのリクエストを適切なサブスキルへルーティング
-- `backend-scan` — 既存のバックエンドコードベースを調査しメモリを最新に保つ
-- `backend-api-design` — エンドポイントとスキーマを設計
-- `backend-visualize` — ERD、クラス図、アーキテクチャ図などを作成
-- `backend-implement` — 設計をコードへ変換
-- `backend-refactor` — 既存コードを振る舞いを変えずに再構成
-- `backend-test` — テストを追加・拡充
-- `backend-auth` — 認証と認可を追加
-- `backend-doctor` — バックエンドのヘルスチェックを実行
+既存のスキルフォルダは `--force` を指定しない限りスキップされます。
 
 ## スキルがプロジェクト内で行うこと
 
-- **メモリファイル**：スキルはプロジェクトのメモリ（概要、技術スタック、決定事項、未解決の課題）をプロジェクト内の `.opencode/everything-backend-memory/` に、実行のチェックポイントとパッチを `.opencode/everything-backend-memory/.checkpoints/` に書き込みます。チェックポイントフォルダは `.gitignore` に追加してください。
-- **既定は auto モード**：エージェントは確認なしでコードを読み、ローカルで完結するコマンド（lint、型チェック、ビルド、ユニットテスト、読み取り専用の依存関係監査）を実行します。
-- **必ず事前に確認する操作**：マイグレーションの適用やデータベースの変更、git の commit・ブランチ切り替え・reset・clean・stash・rebase・merge・push、自身が作成していないファイルの削除や上書き、依存関係の追加・更新・削除、デプロイ・イメージの push・IaC の apply・シークレットのローテーション・有料の外部 API 呼び出し、CI/CD 設定やシークレットファイルの編集、そしてローカルであると証明できないデータベース・キュー・サービスに対するテストやアプリの実行。失敗したテストを通すためにスキップしたり弱めたりすることはありません。
-- **対話モード**："ask me before each step" と伝えると、各ステップを自分で承認できます。
+- **メモリファイル。** スキルはプロジェクトのメモリ（概要、技術スタック、決定事項、未解決の課題、テスト戦略、デプロイ計画）を `.opencode/everything-backend-memory/` に書き込みます。互換性のため、このフォルダ名はどのホストでも同じです。チェックポイントとパッチは `.opencode/everything-backend-memory/.checkpoints/` に保存されます。`.checkpoints/` フォルダを `.gitignore` に追加してください。メモリをコミットしたくない場合は、メモリフォルダ全体を追加してください。
+- **成果物。** 一部のスキルはプロジェクト内にドキュメントを書き込みます。
+  - アーキテクチャドキュメントと ADR（`docs/architecture/`、`docs/adr/`）
+  - セキュリティレビュー（`docs/security/`）
+  - ランブック（`docs/runbooks/`）
+- **チェックポイントと取り消し。** コードを編集するスキルは、各実行を `_shared/scripts/checkpoint.js` で記録します。実行は、その実行自身のパッチを逆適用することで取り消せます。ロールバックでは `git checkout --`、`reset --hard`、`clean` を一切使用しないため、あなた自身の編集は失われません。
+- **既定は auto モード。** エージェントは確認なしでコードを読み、ローカルで完結するコマンドを実行します。これには lint、型チェック、ビルド、ユニットテスト、読み取り専用の依存関係監査が含まれます。
+- **必ず事前に確認する操作** は次のとおりです。
+  - マイグレーションの適用やデータベースの変更
+  - git の commit、ブランチ切り替え、reset、clean、stash、rebase、merge、push
+  - 自身が作成していないファイルの削除や上書き
+  - 依存関係のインストール、更新、削除
+  - デプロイ、イメージの push、IaC の apply、シークレットのローテーション、有料の外部 API 呼び出し
+  - CI/CD 設定やシークレットファイルの編集
+  - ローカルであると証明できないデータベース、キュー、サービスに対するテストやアプリの実行
+- **失敗したテストを通すためにスキップしたり弱めたりすることはありません。**
+- **対話モード。** "ask me before each step" と伝えると、各ステップを自分で承認できます。
 
 ## 開発
 
-実際のグローバルディレクトリを汚さずにインストーラをテストするには：
-
 ```bash
+npm run check          # package, frontmatter, references, fences, plugin manifest
+npm test               # guard.js and checkpoint.js tests
+npm run build:claude   # Claude.ai zips in dist/claude-skills/
 node scripts/install.js --dry-run --target ./tmp-skills
-node scripts/install.js --target ./tmp-skills --force
-rm -rf ./tmp-skills   # テスト用インストールを削除（コミットしない）
-npm run check
 ```
 
-`npm run check`（`prepublishOnly` でも実行）は、`bin` と `files` のパスが存在すること、各スキルの frontmatter が有効であること、各スキルが `README.md` と `backend-orchestrator` に記載されていること、参照されている `_shared/` ファイルが存在することを検証します。
+`npm run check` と `npm test` はどちらも `prepublishOnly` で実行されます。`npm run check` は次の点を検証します。
+
+- `bin`/`files` のパスが存在すること
+- frontmatter が Claude 向けに有効であること：name がフォルダ名と一致し、description が 1024 文字以内で山括弧を含まないこと
+- すべてのスキルがこの README と `backend-orchestrator` に記載されていること
+- 参照されているすべての `_shared/` および `references/` ファイルが存在すること
+- コードフェンスの対応が取れていること
+- プラグインマニフェストのバージョンが `package.json` と一致すること
 
 ## リポジトリ構成
 
 ```text
-.agents/skills/            スキル定義（スキルごとに 1 フォルダ）
-.agents/skills/_shared/    全スキル共通の参照ドキュメント
-scripts/install.js         NPX/ローカル用インストーラ
-scripts/check-package.js   パッケージとスキルの整合性チェック（npm run check）
-docs/                      監査レポート
-.github/                   Issue と Pull Request のテンプレート
+.agents/skills/<skill>/SKILL.md      Skill entry points (one folder per skill)
+.agents/skills/<skill>/references/   Detail loaded on demand
+.agents/skills/_shared/              Shared rules, host tool map, stack references
+.agents/skills/_shared/scripts/      checkpoint.js and guard.js
+.claude-plugin/                      Claude Code plugin manifest and marketplace
+hooks/                               Claude Code guard hook
+scripts/install.js                   NPX/local installer
+scripts/build-claude-skills.js       Claude.ai zip builder
+scripts/check-package.js             Consistency check (npm run check)
+scripts/test-scripts.js              Script tests (npm test)
+docs/                                Audit reports
+.github/                             Issue and pull request templates
 ```
 
 `.opencode/` はこのリポジトリには含まれません。スキルの実行時にプロジェクト内へ `.opencode/everything-backend-memory/` が作成されます。

@@ -1,418 +1,162 @@
 ---
 name: backend-ops
-description: "Own observability, caching, async messaging, and config management for backend projects. Use this skill when the user says 'observability', 'logging', 'metrics', 'tracing', 'caching', 'queue', 'config', 'async', 'production-ready', or asks how to operate a backend at scale."
+description: "Makes a backend operable in production: audits and adds observability (structured logs, correlation IDs, metrics, OpenTelemetry tracing, health endpoints, SLOs, burn-rate alerts, runbooks), resilience patterns (timeouts, safe retries with jitter, circuit breakers, bulkheads, load shedding, idempotency keys, outbox), caching, queues and async messaging, config and secrets handling, and backup, restore drills and disaster recovery. Writes runbooks to docs/runbooks/. Use when the user says 'add logging', 'observability', 'metrics', 'tracing', 'SLO', 'alerting', 'runbook', 'incident runbook', 'timeouts', 'retries', 'circuit breaker', 'caching strategy', 'queue', 'outbox', 'config management', 'feature flags', 'secrets injection', 'backups', 'point-in-time recovery', 'disaster recovery', 'RPO', 'RTO', or 'make this operable in production'. Not for CI/CD and deploy pipelines (backend-deploy), security review (backend-security) or fixing a specific bug (backend-debug)."
 ---
 
 # Backend Ops
 
-## When to Activate
+Make the service observable, resilient and recoverable. This skill audits what exists, recommends patterns that fit the stack, implements the agreed changes, verifies them, and records the decisions.
 
-- User asks about observability, logging, metrics, tracing, or monitoring
-- User says "caching strategy", "cache invalidation", "prevent cache stampede"
-- User asks about queues, async processing, message brokers, retries, dead-letter
-- User says "config management", "feature flags", "secrets injection", "environment variables"
-- User wants to make a backend production-ready
-- Before defining SLIs/SLOs or incident-response runbooks
+## When to Use
 
-## Context Loading
+- Observability: logging, metrics, tracing, health and readiness endpoints, SLOs, alerting, incident runbooks.
+- Resilience: timeouts, retries, circuit breakers, bulkheads, load shedding, fallbacks, idempotency keys, outbox.
+- Caching, queues, background jobs and message brokers.
+- Config validation, feature flags, secrets injection and rotation.
+- Backups, point-in-time recovery, restore drills and disaster recovery.
+- "Make this production-ready" (the ops part; pipelines and release go to `backend-deploy`).
 
-Read project memory for existing stack before recommending tools:
+Not for:
+- Dockerfiles, CI/CD, Kubernetes manifests, release strategy and rollback of deploys: `backend-deploy`.
+- Threat modeling, OWASP review, secret scanning and supply chain: `backend-security`.
+- Fixing a specific bug or outage root cause: `backend-debug`.
+- Writing or applying migrations: `backend-migrate`.
+- Building new feature code: `backend-implement` (this skill adds cross-cutting ops code such as middleware, clients and config modules).
 
-- `.opencode/everything-backend-memory/project-overview.md` — architecture shape
-- `.opencode/everything-backend-memory/tech-stack.md` — language/framework/database
-- `.opencode/everything-backend-memory/decisions.md` — prior operational choices
-- `.opencode/everything-backend-memory/api-patterns.md` — endpoint hot paths to instrument
+## Before You Start
 
-If memory is stale or empty, suggest running `backend-scan` first.
+1. Resolve the shared docs folder ("<shared>"): first `_shared/` inside this skill's folder (bundled installs, e.g. Claude.ai), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
+2. Read `<shared>/tool-rules.md` (mode=auto contract, Production Targets, checkpoints) and `<shared>/host-tools.md` if the action names below don't match your host's tools. Read `<shared>/principles.md` -> System and Security. Read `<shared>/memory-schema.md` -> decisions.md, issues.md and tech-stack.md before writing memory.
+3. Load project memory per `<shared>/context-loading.md`: `decisions.md` (prior ops choices), `tech-stack.md` (language, framework, infra), `api-patterns.md` (hot paths to instrument and cache), `project-overview.md` (services and source roots), and `deployment.md` if present (health paths, platform). Load `issues.md` for audits. If memory is empty or stale, suggest `backend-scan`; if the user declines, continue from what the codebase shows. For a greenfield design request, work from the user's requirements.
+4. If the detected stack matches a file in `<shared>/stacks/`, read it.
 
-## Required Context
+## Workflow
 
-Priority-ranked memory files to load before making operational recommendations:
+### Step 1: Scope the request
 
-1. `decisions.md` — prior ops decisions (log levels, cache strategy, queue config)
-2. `tech-stack.md` — language, framework, and infrastructure choices that constrain tooling
-3. `api-patterns.md` — endpoint hot paths that need instrumentation and caching
-4. `project-overview.md` — architecture shape and service boundaries for tracing scope
+Map the request to one or more areas: observability, resilience, caching, messaging, config/secrets, backup/DR. "Production-ready" means all six.
 
-## Operational Principles
+For each area, learn the constraints that change the answer. Ask once, in one message, only for what memory and code do not show:
+- traffic and latency targets, or existing SLOs;
+- which dependencies are critical (DB, cache, broker, third-party APIs);
+- RPO and RTO for each datastore (backup/DR);
+- where the service runs and which observability backend exists.
 
-Apply the system and security principles in `_shared/principles.md` to operational design.
+Output: the list of areas, the services in scope, and a feature slug for the checkpoint (for example `ops-observability`). Done when the scope is confirmed or, in `mode=auto`, stated.
 
-## Logging
+### Step 2: Audit the current state
 
-### Structured Logs
+Run the probes for each in-scope area from `references/audit-probes.md`. Search the source roots from `project-overview.md` and use per-language patterns for the detected stack only.
 
-- Emit JSON or key-value logs with consistent fields: `timestamp`, `level`, `service`, `correlation_id`, `message`, `error`
-- Avoid string concatenation; use structured context instead
+- Confirm every match by reading the code. A match is a lead, not a finding.
+- Record each finding with path and line, probe, short excerpt (secrets masked), severity, violated principle and fix. Use the severity rubric in `references/audit-probes.md`.
+- A probe that cannot run is reported as "did not run", never as clean.
+- Detect existing health routes and deploy probe paths before calling one missing (`references/observability.md` -> Health Endpoints).
 
-```json
-{
-  "timestamp": "2026-06-15T12:34:56Z",
-  "level": "error",
-  "service": "payment-service",
-  "correlation_id": "abc-123",
-  "message": "charge failed",
-  "error": "insufficient_funds",
-  "user_id": "redacted"
-}
-```
+Output: a findings table. Done when every in-scope area has findings or an explicit "no gaps found" with the probes that ran.
 
-### Log Levels
+### Step 3: Choose patterns
 
-| Level | Use |
-|-------|-----|
-| `DEBUG` | Detailed dev/troubleshooting info |
-| `INFO` | Normal business events |
-| `WARN` | Degraded state, recoverable issues |
-| `ERROR` | Failures needing investigation |
-| `FATAL` | Crash the process, alert immediately |
+Pick the smallest set of patterns that closes the gaps. Use the decision tables below and the references. Prefer libraries already in the lockfile.
 
-- `INFO` in production should be meaningful, not noisy
-- Use sampling or dynamic log levels for high-volume debug logs
+For each choice, note the alternative rejected and why; these become `decisions.md` entries in Step 6.
 
-### Correlation IDs
+Output: a change plan listing files to create or edit, packages to add, and config or runbooks to write. If the user asked for a design only, skip to Step 6 and write the plan as the deliverable.
 
-- Generate a `correlation_id` (or `trace_id`) at the edge and propagate through headers and logs
-- Include it in every downstream call and log entry
-- Return it in error responses so users can reference incidents
+### Step 4: Confirm and implement
 
-### PII Redaction
+Follow the mode=auto contract in `<shared>/tool-rules.md`; do not redefine it here. In practice for this skill:
 
-- Build a deny-list of sensitive fields: `password`, `token`, `ssn`, `email`, `phone`, `credit_card`
-- Redact automatically in log serializers and error responses
-- Log only hashes or masked values for identifiers when needed
+- Creating new files (middleware, config module, runbooks) and editing source files in place within the plan run without asking in `mode=auto`. In `mode=interactive`, show the plan and diffs first.
+- Always Ask First: installing packages, editing CI/CD config or `.env*` files, secret rotation, IaC apply, changing backup settings on a real account, restores, and anything that touches a non-local target.
+- If the service is in an active incident or the change sits on a hot path the user called fragile, pause and confirm the plan even in `mode=auto`.
 
-## Metrics
+Start a checkpoint before the first edit: `node <shared>/scripts/checkpoint.js start --skill backend-ops --feature <slug>`. Record each file you create or edit (`checkpoint.js record`), snapshot after each step, and close it when done. If Node is unavailable, follow `<shared>/tool-rules.md` -> Concurrent & Partial Work by hand. If `start` exits 3, offer resume or restart.
 
-### What to Measure
+Implement in this order when several areas are in scope: config validation, logging and correlation IDs, health endpoints, timeouts and resilience, metrics and tracing, caching and messaging changes, runbooks. Per-stack code is in `references/scaffolding.md`.
 
-- **Request rate, latency (p50/p95/p99), errors** per endpoint
-- **Business outcomes**: orders created, payments succeeded, jobs completed
-- **Resource health**: CPU, memory, DB connections, queue depth, disk
-- **Dependency health**: external API latency/error rate
+Output: the edited and created files, recorded in the checkpoint.
 
-### Metric Types
+### Step 5: Verify
 
-| Type | Use |
-|------|-----|
-| Counter | Events, successes, failures |
-| Histogram / Summary | Latency distributions |
-| Gauge | Current state (queue depth, active connections) |
+Run the checks in `references/scaffolding.md` -> Verify After Generating, plus the area-specific checks in each reference (resilience fault tests, cache and queue checks, restore drill for backup/DR).
 
-### Health Metrics
+- Type-check, lint and unit tests run without asking, after you read the script body; a script that runs migrations or connects to a database or other target is an integration run.
+- Starting the app or integration tests run only if every target is provably local (`<shared>/tool-rules.md` -> Production Targets). Otherwise give the user the exact commands.
+- Follow Command Time Budgets. A check that did not complete is reported as such.
+- Never report a gap as fixed unless a check proved it.
 
-- Expose `/health`, `/ready`, and `/metrics` endpoints
-- Liveness: process is running
-- Readiness: dependencies (DB, cache, queue) are reachable
-- Metrics endpoint should be scrapable by Prometheus-compatible collectors
+Done when every change has a passing check or is listed as "not verified" with the reason.
 
-## Tracing
+### Step 6: Record and report
 
-### Distributed Tracing Basics
+1. Append to `decisions.md` one entry per choice (log format, health paths, metrics port, sampling ratio, cache strategy, queue technology, retry policy, RPO/RTO, backup mechanism), using the schema in `memory-schema.md`.
+2. Update `tech-stack.md` optional sections `## Observability`, `## Caching` and `## Messaging` with tools now in use. If `deployment.md` exists, append its optional `## Runbooks` and `## Backup and DR` sections (links, backup schedule, last tested restore, RPO/RTO); do not create it, `backend-deploy` owns it.
+3. Log unresolved findings in `issues.md` (secrets masked), with the owner skill in `### Recommendation`.
+4. Write runbooks to `docs/runbooks/<topic>.md` (alert runbooks, `incident-response.md`, `disaster-recovery.md`). Edit existing runbooks in place; keep their drill logs and history.
+5. Close the checkpoint (`checkpoint.js close --skill backend-ops --feature <slug> --status completed`).
+6. Give the Ops Report from `references/audit-probes.md` -> Ops Report Template.
 
-- A trace follows a request across services; spans represent operations within that trace
-- Start a root span at the edge and propagate context in headers (`traceparent`)
-- Add spans for DB queries, cache calls, external HTTP requests, and queue publishes/consumes
+Done when memory is updated, the checkpoint is closed and the report lists findings, changes, verification results and open items.
 
-### OpenTelemetry
+## Exit Checklist ("production-ready" from the ops side)
 
-- Prefer OpenTelemetry for vendor-neutral instrumentation
-- Auto-instrument HTTP frameworks, databases, and message brokers when available
-- Export to OTLP, Jaeger, Zipkin, or vendor backends
-- Keep span names stable and use attributes for variable data
-
-```
-span name: GET /api/v1/orders/:id
-attributes:
-  http.method: GET
-  http.route: /api/v1/orders/:id
-  http.status_code: 200
-  db.statement: SELECT * FROM orders WHERE id = ?
-```
-
-## Caching
-
-### Cache Layers
-
-| Layer | Use |
-|-------|-----|
-| In-process (LRU) | Hot local objects, tiny data, no eviction control |
-| Distributed (Redis/etc.) | Shared state across instances, explicit TTL |
-| CDN | Static assets, public GET responses |
-| HTTP cache headers | Browser/proxy caching for idempotent reads |
-
-### Cache Key Design
-
-- Include version, resource type, and deterministic parameters
-- Avoid unbounded key cardinality
-- Use prefixes to enable bulk invalidation: `v1:users:{id}`, `v1:orders:list:{query_hash}`
-
-### Invalidation Strategies
-
-- **TTL**: simple, acceptable staleness
-- **Write-through**: update cache on write, always consistent but slower
-- **Write-behind**: write to cache, flush async to DB; risky
-- **Cache-aside**: app manages cache; common, flexible, requires explicit invalidation
-- **Event-based invalidation**: subscribe to change events and evict/update keys
-
-### Stampede Protection
-
-- Use locks or single-flight patterns so only one process repopulates a missing key
-- Add a short jitter to TTLs to avoid mass expiration
-- Serve stale-while-revalidate for reads when acceptable
-
-## Async / Messaging
-
-### Job Queues vs Message Brokers
-
-| Pattern | Use |
-|---------|-----|
-| Job queue | Delayed work, retries, rate limiting, background tasks |
-| Pub/sub | Broadcast events, decoupled consumers |
-| Stream | Event sourcing, ordered event log, replay |
-
-### Message Handling Rules
-
-1. **Idempotency**: consumers must handle duplicate messages safely
-2. **Ack only after success**: only acknowledge after processing and persistence
-3. **Bounded retries**: cap retries with exponential backoff and jitter
-4. **Dead-letter queue**: route permanently failed messages for inspection
-5. **Visibility timeout**: prevent double-processing in pull-based queues
-
-### Outbox Pattern
-
-- Use when a transaction must publish an event atomically with a DB write
-- Write the event to an `outbox` table in the same transaction
-- A relay process polls the outbox and publishes to the broker
-- Mark events as processed after successful publish
-
-### Retries and Dead-Letter
-
-```
-retry_policy:
-  max_attempts: 5
-  backoff: exponential
-  initial_delay: 1s
-  max_delay: 60s
-  jitter: true
-
-on_permanent_failure:
-  move_to: dlq
-  alert: true
-  manual_review: true
-```
-
-## Config Management
-
-### Environment Validation
-
-- Load config at startup and fail fast on missing required values
-- Validate types, ranges, and allowed values
-- Separate defaults (safe for dev) from required secrets
-
-### Feature Flags
-
-- Use feature flags for rollout, kill switches, and A/B behavior
-- Store flag state outside the deploy pipeline when possible
-- Audit flag changes and provide an emergency off switch
-
-### Secrets Injection
-
-- Never commit secrets; load from environment variables, secret managers, or mounted files
-- Rotate secrets regularly and support zero-downtime rotation
-- Do not print secrets in logs, error messages, or health endpoints
-
-### Multi-Environment Config
-
-- Keep environment-specific values in environment variables or environment-specific config files
-- Use the same artifact/container across environments; only config changes
-- Document required variables with examples in a non-secret template
-
-## Execution
-
-Turn operational principles into observable, evidence-backed actions.
-
-### Audit Current Observability
-
-Run these probes and record file paths and line numbers for every finding.
-
-1. **Logging patterns**
-   - `grep -R "console\.log\|console\.error\|console\.warn" src/`
-   - `grep -R "logger\.\(info\|warn\|error\|debug\)" src/`
-   - Look for string concatenation inside log calls vs. structured objects.
-2. **Structured vs unstructured logs**
-   - Read representative log emission points; confirm JSON/key-value fields (`timestamp`, `level`, `service`, `correlation_id`, `message`, `error`).
-   - Flag plain string messages without context.
-3. **Correlation ID middleware**
-   - `grep -R "correlation_id\|correlation-id\|x-correlation-id\|traceparent\|request-id" src/`
-   - Confirm the ID is generated at the edge and propagated to downstream calls and log entries.
-4. **`/health` and `/metrics` endpoints**
-   - `grep -R "'/health'\|\"/health\"\|'/ready'\|\"/ready\"\|'/metrics'\|\"/metrics\"" src/`
-   - Probe running services with `curl -fsS http://localhost:<port>/health` and `/metrics`.
-5. **Sentry / error tracking**
-   - `grep -R "@sentry\|sentry\.io\|sentry-sdk\|newrelic\|datadog" src/ package.json pyproject.toml go.mod`
-6. **Tracing middleware**
-   - `grep -R "opentelemetry\|jaeger\|zipkin\|traceparent" src/`
-
-Record each result with severity using the same levels as `backend-doctor`.
-
-### Generate Observability Scaffolding
-
-If the audit shows gaps, add the missing pieces using the stack detected in `tech-stack.md`. Only generate snippets for stacks that are confirmed by the manifest.
-
-#### Node.js / Express
-
-- `/health` endpoint:
-  ```javascript
-  app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
-  ```
-- `/metrics` endpoint (using `prom-client`):
-  ```javascript
-  const client = require('prom-client');
-  client.collectDefaultMetrics();
-  app.get('/metrics', async (_req, res) => res.set('Content-Type', client.register.contentType).end(await client.register.metrics()));
-  ```
-- Structured logger (using `pino`):
-  ```javascript
-  const logger = require('pino')({ level: process.env.LOG_LEVEL || 'info' });
-  ```
-- Correlation ID middleware:
-  ```javascript
-  const { v4: uuidv4 } = require('uuid');
-  app.use((req, res, next) => {
-    req.correlation_id = req.get('x-correlation-id') || uuidv4();
-    res.set('x-correlation-id', req.correlation_id);
-    next();
-  });
-  ```
-
-#### Python / FastAPI
-
-- `/health` endpoint:
-  ```python
-  @app.get("/health")
-  async def health():
-      return {"status": "ok"}
-  ```
-- `/metrics` endpoint (using `prometheus-fastapi-instrumentator`):
-  ```python
-  from prometheus_fastapi_instrumentator import Instrumentator
-  Instrumentator().instrument(app).expose(app)
-  ```
-- Structured logger (using `structlog`):
-  ```python
-  import structlog
-  logger = structlog.get_logger()
-  ```
-- Correlation ID middleware:
-  ```python
-  from contextvars import ContextVar
-  correlation_id: ContextVar[str] = ContextVar('correlation_id')
-  ```
-
-#### Go
-
-- `/health` endpoint:
-  ```go
-  http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-      w.Header().Set("Content-Type", "application/json")
-      w.Write([]byte(`{"status":"ok"}`))
-  })
-  ```
-- `/metrics` endpoint (using `github.com/prometheus/client_golang/prometheus/promhttp`):
-  ```go
-  http.Handle("/metrics", promhttp.Handler())
-  ```
-- Structured logger (using `log/slog`):
-  ```go
-  logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-  ```
-- Correlation ID middleware:
-  ```go
-  func correlationIDMiddleware(next http.Handler) http.Handler {
-      return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-          id := r.Header.Get("X-Correlation-ID")
-          if id == "" { id = uuid.NewString() }
-          w.Header().Set("X-Correlation-ID", id)
-          next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), "correlation_id", id)))
-      })
-  }
-  ```
-
-### Report Findings
-
-Present findings with the same severity scale used by `backend-doctor`:
-
-- **Critical**: secrets exposed in logs or health endpoints, missing PII redaction on a production path, no error tracking on a revenue-critical service.
-- **High**: no correlation IDs across service boundaries, missing `/health` or `/metrics` on a deployed service, unstructured logs only on a high-throughput path.
-- **Medium**: partial tracing coverage, missing `/ready` check, inconsistent log levels, no sampling on high-volume debug logs.
-- **Low**: cosmetic naming inconsistencies, missing documentation for observability endpoints, non-critical metric gaps.
-
-Each finding must include:
-1. **File path and line number**: `src/middleware/logger.ts:14`.
-2. **Audit command or probe** that produced the evidence: `grep -n "console.log" src/routes/order.ts`.
-3. **Relevant output excerpt**: 2–5 lines showing the matched code or probe result.
-4. **Severity and category**.
-5. **Why it violates an operational principle**.
-6. **Recommendation or minimal fix**.
-
-If a required tool is missing or fails to run, follow `_shared/tool-rules.md`: report the exact error as a **Medium** tooling finding and try an alternative command when available.
-
-## Decision Trees
-
-### Choosing a Cache Strategy
-
-```
-Read-heavy, low mutation, tolerant of staleness?
-  YES -> Cache-aside with TTL
-  NO -> Write-through or event invalidation
-
-Need shared state across instances?
-  YES -> Distributed cache
-  NO -> In-process LRU may suffice
-
-Frequently requested key with expensive computation?
-  YES -> Add stampede protection (single-flight/lock)
-  NO -> TTL is usually enough
-```
-
-### Choosing a Queue Type
-
-```
-Single producer, single consumer, retries needed?
-  -> Job queue (Redis/Bull, Celery, Sidekiq, etc.)
-
-Multiple consumers, fan-out, no ordering?
-  -> Pub/sub topic
-
-Ordered events, replay, audit log?
-  -> Stream/Kafka-style log
-
-Must guarantee publish after DB write?
-  -> Outbox pattern + any broker
-```
-
-### Choosing an Observability Stack
-
-```
-Single service, simple needs?
-  -> Structured logs + basic metrics endpoint
-
-Multiple services, cross-request debugging?
-  -> Add OpenTelemetry tracing
-
-SLI/SLO dashboards and alerting?
-  -> Metrics backend (Prometheus-compatible) + alerting rules
-
-Security/compliance audit trail?
-  -> Immutable audit log + long-term storage
-```
-
-## Execution Process
-
-1. **Load context**: read memory files or run `backend-scan`
-2. **Identify concern**: logging, metrics, tracing, caching, async, or config
-3. **Apply principles**: enforce the rules in this skill
-4. **Recommend concrete patterns**: use decision trees to narrow options
-5. **Draft changes**: propose config, code snippets, or runbook steps aligned with the existing stack
-6. **Confirm scope**: ask the user whether to implement now or produce a design doc
+- [ ] Structured JSON logs with correlation IDs; secrets and PII redacted in the logger.
+- [ ] Liveness and readiness endpoints that match the deploy config; readiness fails during shutdown.
+- [ ] RED metrics with route-template labels on an internal port; traces exported via OTLP with sampling.
+- [ ] SLOs defined, burn-rate alerts set, each alert linked to a runbook.
+- [ ] Every remote call has a timeout; retries only on idempotent operations, with jitter and a budget.
+- [ ] Circuit breakers or bulkheads on critical dependencies; overload returns 429/503 with `Retry-After`.
+- [ ] Consumers are idempotent, ack after success, and have a monitored DLQ.
+- [ ] Config validated at startup; secrets come from a manager, not files in the repo.
+- [ ] Backups encrypted and off-site, RPO/RTO recorded, a restore drill passed, `docs/runbooks/disaster-recovery.md` exists.
+
+Unchecked items go into the report and `issues.md`.
+
+## Resilience Decision Table
+
+| Situation | Pattern | Notes |
+|---|---|---|
+| Any remote call (HTTP, gRPC, DB, cache, broker, SDK) | Timeout plus deadline propagation | callee timeout shorter than caller's; fail fast when the budget is spent |
+| Transient failure on an idempotent or safe operation | Retry with exponential backoff and full jitter | 2 to 3 attempts, honor `Retry-After`, retry budget, one retry layer only |
+| Non-idempotent write that clients or workers retry | Idempotency key | unique per caller and key; store response; 409 while in progress |
+| Dependency failing or slow repeatedly | Circuit breaker plus fallback | one breaker per dependency; fail closed on auth, payments, inventory |
+| One slow dependency starves the rest | Bulkhead (per-dependency pool or semaphore) | size DB pools from server `max_connections` |
+| Traffic above capacity | Load shedding | concurrency limit, drop requests past their deadline, 503/429 with `Retry-After` |
+| DB write and event publish must both happen | Transactional outbox | relay with `FOR UPDATE SKIP LOCKED` or CDC |
+| Messages may arrive twice | Inbox / dedup table or idempotent upsert | at-least-once is the default |
+
+Details, client defaults and libraries: `references/resilience.md`.
+
+## Other Quick Choices
+
+- **Cache**: read-heavy and staleness-tolerant -> cache-aside with TTL; on writes commit first, then delete the key. Per-user data -> keys scoped by tenant and user, `Cache-Control: private` or `no-store`. Hot expensive keys -> single-flight plus TTL jitter.
+- **Messaging**: background jobs -> job queue; fan-out -> pub/sub; ordered replayable events -> stream with partition keys; publish-after-commit -> outbox.
+- **Observability**: one service -> logs, metrics, health; several services -> add OTel tracing; paging -> SLO burn-rate alerts with runbooks.
+- **Backup/DR**: tier 1 data -> PITR (WAL or binlog archiving, or managed PITR) plus off-site immutable copy plus quarterly restore drill.
+
+## Safety Rules
+
+- Restores, `pg_dump` against a remote database, and backup-setting changes on a real account are Always Ask First. Never restore over the source.
+- Never print, log or store secret values; mask them in every excerpt.
+- A leaked secret in code is fixed by rotate-first (`references/config-secrets.md` -> Leak response), and rotation asks first.
+- Do not add dependencies or edit CI/CD without confirmation.
+
+## Handoffs
+
+- Deploy probes, pipeline steps, release strategy -> `backend-deploy` (share the health paths and metrics port from `decisions.md`).
+- Security findings beyond secrets hygiene -> `backend-security`.
+- Bugs found during the audit -> `backend-debug`. Feature code changes (for example idempotency keys inside a handler's business logic) -> `backend-implement`.
+- Schema changes such as outbox or inbox tables -> `backend-migrate` writes the migration; this skill specifies the table.
+- Execution-based health check of the whole project -> `backend-doctor`.
+
+## References
+
+- `references/audit-probes.md`: read in Step 2 for search patterns per area and language, the severity rubric, the finding format and the Ops Report template.
+- `references/observability.md`: read when the scope includes logging, correlation IDs, metrics, tracing, health endpoints, SLOs, alerting or incident runbooks.
+- `references/scaffolding.md`: read when generating observability code (Express, NestJS, FastAPI, Django, Go net/http and Gin, Spring Boot, OpenTelemetry bootstrap) and for the post-generation verification steps.
+- `references/resilience.md`: read when the scope includes outbound calls, timeouts, retries, circuit breakers, bulkheads, load shedding, fallbacks or idempotency keys.
+- `references/caching.md`: read when adding or reviewing a cache, cache keys, invalidation, stampede protection or HTTP cache headers.
+- `references/messaging.md`: read when the scope includes queues, background jobs, brokers, streams, DLQs, the outbox or consumer deduplication.
+- `references/config-secrets.md`: read when the scope includes config loading, environment variables, feature flags, secret managers, rotation or a leaked secret.
+- `references/backup-dr.md`: read when the scope includes backups, PITR, RPO/RTO, restore drills or the disaster recovery runbook.

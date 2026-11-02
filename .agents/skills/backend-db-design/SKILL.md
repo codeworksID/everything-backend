@@ -1,414 +1,178 @@
 ---
 name: backend-db-design
-description: "Design database schemas including table structures, relationships, indexes, and constraints. Recommends database type (PostgreSQL, MySQL, MongoDB, Redis), creates ERD diagrams with mermaid, and generates migration plans. Use this skill when the user says 'design database', 'create schema', 'plan tables', or starting a feature with data storage."
+description: Designs database schemas for backend features, covering tables or collections, keys, relationships, indexes, constraints, transaction boundaries and multi-tenant isolation, for PostgreSQL, MySQL, MongoDB and Redis. Produces a target schema, an ERD draft and an ordered migration plan, and hands the plan to backend-migrate, which writes and applies the migrations. Use when the user says "design the database", "create a schema", "plan the tables", "model this data", "what tables do I need", "which database should I use", "add a table for", or starts a feature that stores new data.
 ---
 
 # Backend DB Design
 
-## When to Activate
+Design the target schema for a feature, review it, and hand an ordered migration plan to `backend-migrate`.
 
-- User wants to design database schema
-- User says "design database", "create schema", "plan tables"
-- Starting a new feature with data storage
-- Need to add new tables/collections
-- User asks "what database should I use?"
+## When to Use
 
-> **Boundary**: This skill designs the target schema and a migration PLAN. It does not write or apply migration files; hand the plan to `backend-migrate`, which is the only skill that writes and applies migrations.
+- The user asks to design a schema, plan tables or collections, or model data.
+- A new feature stores data that has no table yet.
+- The user asks which database to use and none is recorded.
+- `backend-implement` or `backend-auth` reports missing persistence (loop-back).
 
-## Prerequisites
+Not for: writing or applying migration files (`backend-migrate`), changing existing tables in place without a design question (`backend-migrate`), rendering or saving diagrams (`backend-visualize`), system-level architecture (`backend-architect`).
 
-See `_shared/context-loading.md` for standard prerequisites (project root check, manifest detection, shared file presence, memory fallback, and staleness rules).
+> **Boundary**: this skill produces the target schema and a migration PLAN. It never writes or applies migration files. `backend-migrate` is the only skill that writes and applies migrations.
 
-**DB-design-specific prerequisites:**
+## Before You Start
 
-- REQUIRED: data storage need is confirmed
-  - Check: ask the user "What data do you need to store?" and confirm at least one entity is identified
-  - If missing: stop and ask the user to confirm the data storage need and at least one entity
-- REQUIRED: `_shared/principles.md` loaded (especially the database and security sections)
-  - Check: resolve `_shared/principles.md` as described in `_shared/context-loading.md` → Resolving `_shared/` Files (sibling of this skill's folder first)
-  - If missing: warn once and continue with this skill's own rules; do not stop
-- RECOMMENDED: `db-schema.md` exists
-  - Check: `glob .opencode/everything-backend-memory/db-schema.md`
-  - If missing: create an empty `db-schema.md` and append the new schema after this design is approved
+1. Resolve the shared docs folder ("<shared>"): first `_shared/` inside this skill's folder (bundled installs, e.g. Claude.ai), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
+2. Read `<shared>/tool-rules.md` (mode=auto contract, checkpoints), `<shared>/principles.md` (Database and Security sections) and `<shared>/memory-schema.md` (db-schema.md and decisions.md formats). Read `<shared>/host-tools.md` if the actions below don't map clearly to your host's tools.
+3. Load project memory per `<shared>/context-loading.md`: always `project-overview.md`, `tech-stack.md`, `db-schema.md` and `decisions.md`; `api-patterns.md` only if the design touches endpoints. If memory is missing or stale, suggest `backend-scan` and continue from the live code; create `db-schema.md` from the schema in `<shared>/memory-schema.md` when you save the design.
+4. If the detected stack matches a file in `<shared>/stacks/`, read it (for PostgreSQL: `<shared>/stacks/postgres.md`).
 
-## Required Context
+This skill writes only memory files. Start a checkpoint before the first memory write: `node <shared>/scripts/checkpoint.js start --skill backend-db-design --feature <slug>`. Record each memory file you change (`checkpoint.js record --skill backend-db-design --feature <slug> --memory <file>`) and close it when done (`checkpoint.js close --skill backend-db-design --feature <slug>`). If it exits with code 3, an open checkpoint exists: offer to resume or restart. If Node is unavailable, follow `<shared>/tool-rules.md` -> Concurrent & Partial Work by hand.
 
-Follow the priority list in `_shared/context-loading.md`. Always load `project-overview.md` and `tech-stack.md`. Load `db-schema.md` when touching the data layer. Load `api-patterns.md` and `decisions.md` lazily when the task involves endpoints or prior design choices.
+## Workflow
 
-## Design Process
+### Step 1: Inspect the Existing Schema
 
-### Step 0: Context Loading
+Memory is a summary; the live code wins (see `<shared>/memory-schema.md` -> conflict rules).
 
-Load memory files per the priority list in `_shared/context-loading.md`. If memory is stale or empty, suggest running `backend-scan` first.
+1. Find schema sources: ORM schema files (`schema.prisma`, Drizzle schema, model or entity classes, `models.py`, `db/schema.rb`), migration folders (`migrations/`, `prisma/migrations/`, `db/migrate/`, `alembic/versions/`, `supabase/migrations/`) and raw `.sql` files.
+2. Read the latest schema and a few recent migrations.
+3. Extract conventions: naming, PK type and generation, timestamp type, soft-delete style, tenancy column, enum style, migration tool and file naming.
+4. Compare with `db-schema.md`. Note conflicts and log them as the conflict rules in `<shared>/memory-schema.md` say.
 
-### Step 1: Requirements Gathering
+Do not connect to a database to inspect it unless the user asks; if they do, use read-only queries and follow `<shared>/tool-rules.md` -> Production Targets.
 
-Ask the user iteratively:
+Output: a short "Current schema and conventions" note. Greenfield projects: say so and skip.
 
-1. "What data do you need to store?"
-2. "What are the relationships between entities?" (1:1, 1:N, M:N)
-3. "What are the access patterns?" (reads vs writes, queries needed)
-4. "What are the scale requirements?" (rows, queries/sec, data size)
-5. "What consistency guarantees are needed?" (ACID vs eventual)
+### Step 2: Gather Requirements
 
-Always confirm:
-- "Let me confirm: [entity list]. Did I miss any?"
+Ask in small batches, and stop asking when answers are clear from the request or code:
 
-### Step 1.5: Data Modeling Rules (MANDATORY)
+1. What data must be stored? List the entities.
+2. How do they relate (1:1, 1:N, M:N), and who owns what?
+3. What are the access patterns: the main reads, writes and their filters and sort order?
+4. Expected scale: rows, growth, reads and writes per second.
+5. Consistency needs: which writes must be atomic together?
+6. Is data per tenant (organization, workspace)? Does it include personal or sensitive data, and how long is it kept?
 
-Default to relational discipline unless the access pattern clearly requires otherwise. Apply the database principles in `_shared/principles.md` before finalizing a schema.
+Confirm: "Entities: [list]. Did I miss any?" If no entity can be identified, stop and ask.
 
-### Step 1.6: Tool-Assisted Schema Analysis (MANDATORY)
+Done when the entity list, relationships and top access patterns are confirmed.
 
-Use OpenCode tools directly while designing or reviewing schema work.
+### Step 3: Confirm the Database
 
-See `_shared/tool-rules.md` for the canonical tool-usage rules.
+- If `tech-stack.md`, `decisions.md` or the code already names the primary database, use it. `backend-architect` decisions take precedence. Do not propose a switch mid-feature; raise concerns as a question.
+- Only if nothing is recorded, choose with `references/database-selection.md` and record the choice in `decisions.md`.
+- Add Redis or a search engine only as derived stores next to the primary.
 
-### Step 2: Database Selection
+### Step 4: Design the Schema
 
-#### PostgreSQL
-- **When**: Complex queries, ACID compliance, relational data, JSON columns
-- **Pros**: Rich data types, JSON support, full-text search, mature
-- **Cons**: More complex setup, vertical scaling primarily
+For each table or collection define: name, columns with types and nullability, primary key, candidate and business keys, foreign keys with `ON DELETE` behavior, `UNIQUE` and `CHECK` constraints, and indexes tied to a query from Step 2.
 
-#### MySQL
-- **When**: Web applications, read-heavy workloads, simpler needs
-- **Pros**: Fast reads, easy setup, wide support, simple replication
-- **Cons**: Limited data types, less JSON support
+Apply these rules (details in `references/relational-rules.md`):
 
-#### MongoDB
-- **When**: Flexible schema, document-oriented, rapid prototyping, hierarchical data
-- **Pros**: Flexible schema, horizontal scaling, JSON-like documents
-- **Cons**: No joins (use $lookup), eventual consistency, larger storage
+- Match the conventions found in Step 1.
+- One PK strategy per project, recorded in `decisions.md`.
+- `NOT NULL` by default; timestamps in UTC (`timestamptz` in PostgreSQL); a real mechanism for `updated_at`.
+- Case-insensitive, normalized uniqueness for emails, usernames and slugs.
+- Index FK columns in PostgreSQL; choose `ON DELETE` deliberately.
+- One soft-delete mechanism, with uniqueness that ignores deleted rows.
+- Money as integer minor units or fixed-point decimal plus currency; never float.
+- Classify personal and sensitive columns and set retention.
+- Identity, credentials and roles: defer to `backend-auth` and include the tables it asks for. Do not design a single role column here.
+- Multi-tenant data: follow `references/multi-tenancy.md` and record the tenancy model in `decisions.md`.
 
-#### Redis
-- **When**: Caching, sessions, real-time features, pub/sub, queues
-- **Pros**: In-memory speed, pub/sub, data structures
-- **Cons**: Limited query capabilities, memory constraints, not for primary storage
+Use `references/schema-templates.md` for the canonical PostgreSQL, MySQL and MongoDB examples and the ORM schema mapping. Use `references/domain-patterns.md` when the feature is a common domain (users, content, e-commerce, messaging, audit).
 
-### Step 3: Schema Design
+Output: target DDL (or ORM schema, or collection validators) for every new or changed table.
 
-#### Relational (PostgreSQL/MySQL)
+### Step 5: Review Normalization, Indexes and Transactions
 
-For each table, define:
-- Table name (snake_case, plural)
-- Columns with types and constraints
-- Primary key (UUID vs auto-increment)
-- Foreign keys and relationships
-- Indexes for query patterns
-- Constraints (NOT NULL, UNIQUE, CHECK)
-- Candidate keys and business keys
-- Delete/update behavior on foreign keys
-- Whether the table is in 3NF and why
+1. Normalization: every column atomic; no partial or transitive dependencies; M:N resolved with junction tables; derived data stored only with a measured reason and a correctness mechanism.
+2. Indexes: each index names the query it serves; composite order is equality first, then range or sort; no duplicate of a unique constraint; no speculative indexes.
+3. Critical write flows: transaction boundary, side effects after commit (outbox, owned by `backend-ops`), concurrency strategy (unique constraint, version column, row lock or idempotency key).
 
-Before finalizing a relational schema, perform this normalization check:
+Fill the tables in `references/review-templates.md`.
 
-1. Is every column atomic?
-2. Does every non-key column depend on the whole key?
-3. Does any non-key column depend on another non-key column?
-4. Are derived/summary fields stored unnecessarily?
-5. Are lookup/reference tables needed?
-6. Are many-to-many relationships resolved through junction tables?
+### Step 6: Draft the ERD
 
-```sql
-CREATE TABLE users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    email VARCHAR(255) UNIQUE NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
-    role VARCHAR(50) DEFAULT 'user',
-    status VARCHAR(50) DEFAULT 'active',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+Draft a Mermaid `erDiagram` with PK, FK and UK markers and every relationship, per `references/erd.md`. Hand it to `backend-visualize` for rendering conventions and saving if the user wants a rendered or stored diagram.
 
-CREATE INDEX idx_users_email ON users(email);
-CREATE INDEX idx_users_status ON users(status);
-```
+### Step 7: Write the Migration Plan
 
-#### Document (MongoDB)
+Produce a plan, not migration files. One row per schema change:
 
-For each collection, define:
-- Collection name (plural, camelCase)
-- Document structure
-- Validation rules
-- Indexes
-
-```javascript
-{
-    _id: ObjectId,
-    email: String,
-    passwordHash: String,
-    role: String,
-    status: String,
-    createdAt: Date,
-    updatedAt: Date
-}
-
-db.users.createIndex({ email: 1 }, { unique: true })
-db.users.createIndex({ status: 1 })
-```
-
-### Step 4: ERD Generation
-
-Create mermaid ERD diagram:
-
-```mermaid
-erDiagram
-    USERS ||--o{ POSTS : writes
-    USERS {
-        uuid id PK
-        string email
-        string password_hash
-        string role
-        timestamp created_at
-    }
-    POSTS {
-        uuid id PK
-        uuid user_id FK
-        string title
-        text content
-        string status
-        timestamp created_at
-    }
-    COMMENTS {
-        uuid id PK
-        uuid post_id FK
-        uuid user_id FK
-        text content
-        timestamp created_at
-    }
-    POSTS ||--o{ COMMENTS : has
-```
-
-### Step 5: Migration Planning
-
-Produce a migration plan, not migration files. For each schema change, list:
-
-1. **Change**: the target DDL intent (new table, new column, new index, constraint, rename, type change, drop)
-2. **Kind**: additive (new tables/nullable columns/indexes) or existing-table change that needs expand/contract
-3. **Data movement**: any backfill or transform of existing rows
-4. **Order and dependencies**: which changes must precede others (parent tables before FKs, expand before code switch)
-5. **Rollback intent**: how each change would be reversed, or why it cannot be
-
-Example migration plan (handed to `backend-migrate`):
-```markdown
 | # | Change | Kind | Data movement | Depends on | Rollback intent |
 |---|--------|------|---------------|------------|-----------------|
-| 1 | Create `users` | additive | none | - | drop table |
-| 2 | Create `posts` with FK to `users` | additive | none | 1 | drop table |
-| 3 | Add `users.role` with default `'user'` | existing table, constant default | none | 1 | drop column |
-```
+| 1 | Create `users` | additive | none | - | drop table (empty) |
+| 2 | Create `posts` with FK to `users`, index `user_id` | additive | none | 1 | drop table (empty) |
+| 3 | Add `users.locale` NOT NULL default `'en'` | existing table, constant default | none | - | drop column |
+| 4 | Rename `users.name` to `full_name` | existing table, expand/contract | dual-write + batched backfill | - | per phase |
 
-Then hand the target schema and this plan to `backend-migrate`, which writes the migration files with the project's tool, applies lock-safe and expand/contract rules, and applies them only after Always Ask First (`_shared/tool-rules.md` → Always Ask First).
+- **Kind**: `additive` (new tables, nullable columns, indexes on new tables) or `existing table` changes. Mark anything that rewrites, renames, retypes or drops existing columns, or sets `NOT NULL` on an existing column, as expand/contract. A new `NOT NULL` column with a constant default is not expand/contract, but `backend-migrate` still checks it for locks.
+- **Data movement**: backfills or transforms; note the PK type so migrate can batch by key.
+- **Depends on**: parents before children; expand before the code switch; contract in a later release.
+- **Rollback intent**: how each change is reversed, or why it cannot be (drops lose data).
+- Also note: the migration tool and naming convention found in Step 1, raw-SQL steps the ORM cannot express (partial indexes, triggers, RLS), and whether target tables are large or hot.
 
-### Step 5.5: Transaction and Constraint Design
+`backend-migrate` writes the files with the project's tool, applies its lock-safe and expand/contract rules (dual-write, safe `NOT NULL`, `lock_timeout`, `CONCURRENTLY`), and applies migrations only after Always Ask First (`<shared>/tool-rules.md`).
 
-For each write-heavy or critical workflow, define:
+### Step 8: Confirm with the User
 
-1. **Transaction boundary**
-   - Which statements must succeed or fail together?
-   - Which side effects must happen outside the transaction?
+Present, in this order:
 
-2. **Concurrency strategy**
-   - Optimistic locking, pessimistic locking, unique constraint enforcement, or idempotency key
+1. Entity list and ERD.
+2. Target schema, with key indexes and constraints highlighted.
+3. Decisions: database, PK strategy, tenancy model, soft delete and retention, denormalization exceptions.
+4. Normalization and index review, and transaction boundaries for critical flows.
+5. The migration plan.
 
-3. **Constraint strategy**
-   - Which rules are enforced by DB constraints?
-   - Which rules stay in application logic because they span multiple aggregates/tables?
+Ask: "Does this schema meet your needs? Any missing fields, relationships or access patterns?" Iterate until the user approves. In `mode=auto`, pause only for missing critical inputs or conflicting decisions (`<shared>/tool-rules.md` -> mode=auto Contract).
 
-4. **Denormalization policy**
-   - If storing duplicated or computed data, document why and how it stays correct
+### Step 9: Save and Hand Off
 
-### Step 6: User Confirmation
+On approval, save without a further prompt (memory updates are part of this skill's stated output):
 
-Present schema design:
+1. Append to `db-schema.md` an entry `## [YYYY-MM-DD HH:MM] Planned: <feature> (not yet applied)` with tables, relationships, indexes and invariants. `backend-migrate` marks it applied.
+2. Append to `decisions.md` each new decision: database choice, PK strategy, tenancy model, retention policy, denormalization exceptions.
+3. Close the checkpoint.
+4. Hand off:
+   - `backend-migrate`: target schema and migration plan (always).
+   - `backend-visualize`: the ERD, if a rendered diagram is wanted.
+   - `backend-api-design`: next step in a feature workflow; pass the concurrency columns that need ETag or 409 handling.
+   - `backend-test`: cross-tenant and constraint tests, when relevant.
 
-- Show ERD diagram
-- List all tables/collections with key fields
-- Highlight important indexes
-- Explain normalization decisions
-- Explain candidate keys, foreign keys, and delete/update behavior
-- Explain transaction boundaries for critical write flows
-- Show migration plan
+In `mode=interactive`, show each memory diff and wait for approval before writing it.
 
-Ask:
-- "Does this schema meet your needs?"
-- "Any missing fields or relationships?"
-- "Any normalization concerns?"
-- "Should any denormalization be justified for performance, or should we keep strict 3NF?"
-- "Should I save this to db-schema.md memory?"
+## Outputs
 
-After approval, hand the target schema and migration plan to `backend-migrate`.
+- Target schema (DDL, ORM schema or collection validators) for every new or changed table.
+- ERD draft (Mermaid).
+- Normalization, index and transaction review.
+- Migration plan table for `backend-migrate`.
+- Memory: a planned-schema entry in `db-schema.md` and new entries in `decisions.md`.
 
-## Decision Trees
+## Done When
 
-### If user data needed:
-- `users` table with: id, email, password_hash, role, status
-- Add timestamps: created_at, updated_at
-- Index email (unique) and status
-- Consider soft delete (deleted_at)
-
-### If content management needed:
-- `posts/articles` table
-- `categories` and `tags` tables (M:N relationship)
-- Status field: draft, published, archived
-- Slug field for URLs
-- Author relationship to users
-
-### If e-commerce needed:
-- `products`, `orders`, `order_items`
-- `customers`, `addresses`
-- `payments`, `inventory`
-- Money: use decimal type, never float
-- Order status: pending, paid, shipped, delivered, cancelled
-- Require transaction boundaries for checkout, payment capture, and inventory reservation
-
-### If real-time features needed:
-- Consider Redis for sessions
-- WebSocket connections table
-- Message history collection
-- Read receipts and typing indicators
-
-### If audit trail needed:
-- `audit_log` table
-- Columns: entity_type, entity_id, action, user_id, old_value, new_value, timestamp
-- Consider append-only storage
-
-### If multi-tenant (SaaS) needed:
-- Decide the tenancy model first and record it in `decisions.md`: shared tables with `tenant_id` (default), schema-per-tenant, or database-per-tenant
-- Shared tables: `tenant_id NOT NULL` with an FK to `tenants` on every tenant-owned table, including child and junction tables
-- Unique constraints include `tenant_id`: `UNIQUE (tenant_id, email)`, not `UNIQUE (email)`
-- Indexes lead with `tenant_id` for tenant-scoped query patterns: `(tenant_id, status, created_at DESC)`
-- FKs between tenant-owned tables include `tenant_id` so a child cannot point at another tenant's parent: `FOREIGN KEY (tenant_id, post_id) REFERENCES posts (tenant_id, id)` (requires `UNIQUE (tenant_id, id)` on the parent)
-- Every query is scoped by `tenant_id` taken from the verified auth context, never from the request body or path; enforce it in a tenant-scoped repository/query layer, and scope admin roles to a tenant unless a platform-admin role is explicitly designed
-- PostgreSQL option: row-level security as a second layer
-  ```sql
-  ALTER TABLE posts ENABLE ROW LEVEL SECURITY;
-  CREATE POLICY tenant_isolation ON posts
-    USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
-  ```
-  `NULLIF` matters: on a pooled connection where the setting was set in an earlier transaction, it reads back as `''`, and `''::uuid` errors; with `NULLIF` an unset tenant returns no rows. The app role must not be a superuser and must not have `BYPASSRLS`; if it also owns the table, add `ALTER TABLE ... FORCE ROW LEVEL SECURITY`. Set the tenant per transaction with a parameterized `SELECT set_config('app.tenant_id', $1, true)` (transaction-local, so pooled connections do not leak it), not `SET LOCAL` with an interpolated literal
-- Require cross-tenant access tests: tenant A cannot read, update, or delete tenant B's rows by ID, and list/search endpoints return only the caller's tenant
-
-## Templates
-
-### PostgreSQL Schema Template
-```sql
--- Users table
-CREATE TABLE users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    email VARCHAR(255) UNIQUE NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
-    role VARCHAR(50) DEFAULT 'user' CHECK (role IN ('user', 'admin', 'moderator')),
-    status VARCHAR(50) DEFAULT 'active' CHECK (status IN ('active', 'suspended', 'deleted')),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    deleted_at TIMESTAMP NULL
-);
-
--- Indexes
-CREATE INDEX idx_users_email ON users(email);
-CREATE INDEX idx_users_status ON users(status) WHERE deleted_at IS NULL;
-CREATE INDEX idx_users_created_at ON users(created_at DESC);
-```
-
-### Normalization Review Template
-```markdown
-## Normalization Review
-
-### 1NF
-- [ ] No repeating groups or multi-value columns
-- [ ] Atomic column values only
-
-### 2NF
-- [ ] No partial dependency on part of a composite key
-- [ ] Junction tables contain only relationship-specific attributes
-
-### 3NF
-- [ ] No non-key column depends on another non-key column
-- [ ] Lookup/reference data extracted where appropriate
-- [ ] Derived data is not stored unless explicitly justified
-
-### Denormalization Exceptions
-- [ ] Any duplicated/computed data is documented
-- [ ] Refresh/consistency mechanism is defined
-```
-
-### Index Design Template
-```markdown
-## Index Strategy
-
-| Query Pattern | Columns Filtered/Sorted | Proposed Index | Why This Order |
-|---------------|--------------------------|----------------|----------------|
-| [Example] | [status, created_at] | `(status, created_at DESC)` | [Equality before range/sort] |
-
-Rules:
-- Index columns that appear in high-value filters, joins, uniqueness checks, and sort clauses
-- Prefer composite indexes that match real query order
-- Do not add speculative indexes without a read pattern
-- Revisit index cost for high-write tables
-```
-
-### MongoDB Schema Template
-```javascript
-// Users collection
-{
-    _id: ObjectId,
-    email: String, // unique, indexed
-    passwordHash: String,
-    role: { type: String, enum: ['user', 'admin', 'moderator'], default: 'user' },
-    status: { type: String, enum: ['active', 'suspended', 'deleted'], default: 'active' },
-    createdAt: { type: Date, default: Date.now },
-    updatedAt: { type: Date, default: Date.now },
-    deletedAt: { type: Date, default: null }
-}
-
-// Indexes
-db.users.createIndex({ email: 1 }, { unique: true })
-db.users.createIndex({ status: 1, createdAt: -1 })
-db.users.createIndex({ deletedAt: 1 }, { sparse: true })
-```
-
-### ERD Template
-```mermaid
-erDiagram
-    USERS ||--o{ POSTS : creates
-    USERS {
-        uuid id PK
-        string email UK
-        string password_hash
-        string role
-        string status
-        timestamp created_at
-        timestamp updated_at
-    }
-    POSTS {
-        uuid id PK
-        uuid user_id FK
-        uuid category_id FK
-        string title
-        string slug UK
-        text content
-        string status
-        timestamp published_at
-        timestamp created_at
-    }
-    CATEGORIES ||--o{ POSTS : contains
-    CATEGORIES {
-        uuid id PK
-        string name UK
-        string slug UK
-    }
-```
+- Every confirmed entity has a table or collection with keys, constraints and justified indexes.
+- Every FK has an explicit `ON DELETE` choice; every index names its query.
+- The migration plan covers every change, with order, kind and rollback intent.
+- The user approved the design (or `mode=auto` had no blocking question).
+- `db-schema.md` and `decisions.md` are updated, the checkpoint is closed, and the handoff to `backend-migrate` is stated.
 
 ## Edge Cases
 
-- **No clear data model**: Ask user for examples, start with core entities
-- **Complex relationships**: Use junction tables for M:N, consider denormalization for performance
-- **High write load**: Consider write optimization (batching, async, partitioning)
-- **High read load**: Consider read replicas, caching, denormalization
-- **Time-series data**: Consider TimescaleDB, InfluxDB
-- **Search-heavy**: Consider Elasticsearch, Meilisearch alongside primary DB
-- **Multi-tenant**: Follow Decision Trees → If multi-tenant (SaaS) needed (tenant_id keys, tenant-scoped queries, optional RLS, cross-tenant tests)
-- **Premature denormalization**: Keep 3NF until measurement proves a bottleneck
-- **Cross-table business rule**: Enforce local invariants in DB constraints and cross-aggregate rules in application transactions
+- **No clear data model**: ask for example records or screens; start with the core entities.
+- **Existing schema conflicts with the request**: show the conflict; extend the existing model rather than creating a parallel table.
+- **Recorded database does not fit the need**: keep it, and add a derived store or ask the user; never switch silently.
+- **Loop-back from implement or auth**: design only the missing tables, then hand a delta plan to `backend-migrate`.
+- **Cross-table business rule**: local invariants in DB constraints; cross-aggregate rules in application transactions.
+- **Large or hot existing tables**: flag them in the plan so `backend-migrate` uses expand/contract and lock-safe steps.
+
+## References
+
+- `references/database-selection.md`: read when no primary database is recorded, or the user asks which database to use.
+- `references/relational-rules.md`: read in Step 4 for keys, columns, case and Unicode, FKs, soft delete, money, concurrency columns, sensitive data, audit and outbox tables.
+- `references/schema-templates.md`: read when writing the target schema; canonical PostgreSQL, MySQL and MongoDB examples and the ORM mapping.
+- `references/multi-tenancy.md`: read when data belongs to tenants (SaaS, organizations, workspaces).
+- `references/domain-patterns.md`: read when the feature is users, content, e-commerce, messaging, audit or another common domain.
+- `references/review-templates.md`: read in Steps 5 and 8 for the normalization, index, key and transaction tables.
+- `references/erd.md`: read in Step 6 for ERD rules and the template.

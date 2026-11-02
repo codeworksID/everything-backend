@@ -39,6 +39,18 @@ Apply these principles across all backend design, implementation, and review wor
 - **Async messaging**: idempotent consumers, acknowledge only after success, bounded retries with backoff, and dead-letter queues for permanent failures.
 - **Operational concerns are part of design**: document transaction boundaries, error taxonomy, authorization boundaries, scaling assumptions, and failure modes.
 
+## Resilience
+
+- **Timeouts on every remote call**: HTTP clients, database queries, cache, queue and third-party SDK calls all get explicit connect and request timeouts, shorter than the caller's own deadline.
+- **Bounded retries**: retry only idempotent or idempotency-keyed operations, on transient errors, with exponential backoff and jitter, a max attempt count, and a retry budget (e.g., retries at most 10-20% of requests) so retries cannot amplify an outage.
+- **Circuit breakers and bulkheads**: stop calling a failing dependency, fail fast or degrade, and isolate pools so one slow dependency cannot exhaust all connections or workers.
+- **Idempotency**: writes that may be retried (payments, orders, webhooks, consumers) use idempotency keys or natural keys with unique constraints.
+- **Graceful degradation and shutdown**: define fallbacks for non-critical dependencies; drain in-flight work on SIGTERM before exit.
+
+## Data Safety
+
+- **Backups with tested restores**: every production datastore has automated backups, point-in-time recovery where available, a defined RPO/RTO, and a restore that has actually been tested. An untested backup is not a backup.
+
 ## Security
 
 - **Secure by default**: require HTTPS, use strong password hashing (argon2id, bcrypt, or scrypt), and encrypt secrets at rest and in transit.

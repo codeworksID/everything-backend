@@ -1,0 +1,23 @@
+{
+  "name": "everything-backend",
+  "version": "0.4.0",
+  "description": "Backend engineering skills for Claude Code: scan, architecture, database design, migrations, API design, auth, implementation, refactoring, testing, debugging, security review, health checks, ops and deployment, plus a guard hook that asks before destructive git, migration, deploy and secret-file operations.",
+  "author": {
+    "name": "CodeWorks"
+  },
+  "homepage": "https://github.com/codeworksID/everything-backend#readme",
+  "repository": "https://github.com/codeworksID/everything-backend",
+  "license": "MIT",
+  "keywords": [
+    "backend",
+    "skills",
+    "agent-skills",
+    "claude-code",
+    "database",
+    "migrations",
+    "api-design",
+    "security",
+    "deployment"
+  ],
+  "skills": ["./.agents/skills/"]
+}
