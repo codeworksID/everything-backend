@@ -9,7 +9,7 @@ Pick the right skill for a backend request, or chain several skills into a gated
 
 ## Before You Start
 
-1. Resolve the shared docs folder ("<shared>"): first `_shared/` inside this skill's folder (bundled installs, e.g. Claude.ai), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
+1. Resolve the shared docs folder ("<shared>"): first `_shared/` inside this skill's folder (bundled installs), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
 2. Read `<shared>/tool-rules.md` (mode=auto contract, Always Ask First, checkpoints) and `<shared>/host-tools.md` if the actions below do not map cleanly to your host's tools.
 3. Check project state per `<shared>/context-loading.md`: is there a backend project, and does `.opencode/everything-backend-memory/` exist and look fresh? Missing or stale memory on an existing project means the pipeline starts with `backend-scan`. No project at all means Greenfield.
 4. If the detected stack matches a file in `<shared>/stacks/`, note it; the routed skills read it.

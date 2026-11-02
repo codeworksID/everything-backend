@@ -30,7 +30,7 @@ Skill rekayasa backend untuk agen AI coding: penemuan proyek, arsitektur, desain
 
 Materi bersama berada di `.agents/skills/_shared/`:
 
-- aturan yang diikuti setiap skill (`tool-rules.md`, `context-loading.md`, `memory-schema.md`, `principles.md`)
+- aturan yang diikuti setiap skill (`tool-rules.md`, `context-loading.md`, `memory-schema.md`, `principles.md`), termasuk `sql-safety.md`, aturan akses data yang kebal injeksi (hanya parameter terikat, identifier dari allowlist, predikat pemilik pada setiap baris milik tenant atau pengguna, dan tes dengan input berbahaya sebelum sebuah perubahan dianggap selesai)
 - peta nama tool untuk setiap host (`host-tools.md`)
 - referensi stack (`stacks/postgres.md`, `stacks/node-typescript.md`, `stacks/python-fastapi.md`)
 - skrip penegakan aturan (`scripts/checkpoint.js`, `scripts/guard.js`)
@@ -71,7 +71,7 @@ Plugin ini menginstal semua skill beserta guard hook `PreToolUse`. Hook ini memb
 
 - perintah git yang destruktif (`reset --hard`, `clean -f`, `checkout -- <path>`, force push)
 - perintah apply, reset, atau drop migrasi
-- SQL yang destruktif
+- SQL apa pun yang menulis data atau skema (klausa `WHERE` tidak membuat penulisan menjadi aman)
 - perintah deploy dan infrastruktur (`kubectl apply`, `helm upgrade`, `terraform apply`, `docker push`)
 - penghapusan rekursif
 - pengeditan file rahasia (`.env`, key)
@@ -91,7 +91,7 @@ Perintah itu menyalinnya ke `~/.claude/skills`. Untuk satu proyek saja, jalankan
 
 ### Claude.ai
 
-Buat satu zip mandiri per skill (setiap zip membawa salinan `_shared/` miliknya sendiri):
+Claude.ai mendapatkan seluruh paket sebagai **satu** skill, `everything-backend`, sehingga setiap sub-skill selalu terinstal bersama. Sub-skill saling bergantung (aturan bersama, handoff, rujukan silang), jadi instalasi sebagian tidak didukung. Build paketnya:
 
 ```bash
 git clone https://github.com/codeworksID/everything-backend.git
@@ -99,7 +99,9 @@ cd everything-backend
 npm run build:claude
 ```
 
-Lalu unggah setiap `dist/claude-skills/<skill>.zip` di **Settings > Capabilities > Skills**. Code execution harus diaktifkan agar skrip dapat berjalan.
+Lalu unggah `dist/claude/everything-backend.zip` di **Settings > Capabilities > Skills**. Code execution harus diaktifkan agar skrip dapat berjalan. Jika sebelumnya Anda mengunggah skill `backend-*` satu per satu, hapus skill tersebut terlebih dahulu.
+
+Di awal setiap sesi, bundle memeriksa dirinya sendiri: entry point-nya menampilkan isi `skills/` dan menjalankan `verify.js` (atau `verify.py`) terhadap `MANIFEST.json`, yang berisi SHA-256 dari setiap file. Jika ada sub-skill atau file yang hilang atau berubah, bundle berhenti dan meminta Anda mengunggah ulang zip lengkapnya.
 
 ### OpenCode, Cursor, Antigravity
 
@@ -146,7 +148,7 @@ Installer menyalin setiap folder skill dari `.agents/skills/` beserta folder ber
 |---|---|---|
 | Claude Code plugin | dikelola oleh `/plugin` | guard hook (`hooks/hooks.json`) |
 | Claude Code skills | `~/.claude/skills/<skill-name>/SKILL.md` | tidak ada |
-| Claude.ai | satu zip yang diunggah per skill, dengan `_shared/` di dalamnya | tidak ada |
+| Claude.ai | satu skill: `everything-backend/skills/<skill-name>/SKILL.md`, dengan `skills/_shared/` | entry point `SKILL.md`, `MANIFEST.json`, `verify.js`, `verify.py` |
 | Antigravity (Gemini IDE) | `~/.gemini/config/plugins/everything-backend-plugin/skills/<skill-name>/SKILL.md` | `plugin.json` (name, version) |
 | Cursor | `~/.cursor/skills/<skill-name>/SKILL.md` | tidak ada |
 | OpenCode / generic | `~/.agents/skills/<skill-name>/SKILL.md` | tidak ada |
@@ -180,7 +182,7 @@ Installer melewati folder skill yang sudah ada kecuali Anda memberikan `--force`
 ```bash
 npm run check          # package, frontmatter, references, fences, plugin manifest
 npm test               # guard.js and checkpoint.js tests
-npm run build:claude   # Claude.ai zips in dist/claude-skills/
+npm run build:claude   # Claude.ai bundle: dist/claude/everything-backend.zip
 node scripts/install.js --dry-run --target ./tmp-skills
 ```
 
@@ -203,7 +205,8 @@ node scripts/install.js --dry-run --target ./tmp-skills
 .claude-plugin/                      Claude Code plugin manifest and marketplace
 hooks/                               Claude Code guard hook
 scripts/install.js                   NPX/local installer
-scripts/build-claude-skills.js       Claude.ai zip builder
+scripts/build-claude-skills.js       Claude.ai bundle builder
+packaging/claude-ai/                 Bundle entry point and verifiers
 scripts/check-package.js             Consistency check (npm run check)
 scripts/test-scripts.js              Script tests (npm test)
 docs/                                Audit reports

@@ -10,6 +10,7 @@ Use this when the bug is "slow": a latency or throughput regression, high CPU, g
 - N+1 detection
 - Profilers per stack
 - Load generation
+- Safe query shapes for performance fixes
 - Regression tests for performance
 - Common fixes and handoffs
 
@@ -59,7 +60,9 @@ Turn on query logging locally and count queries for one request:
 | Hibernate / JPA | `spring.jpa.show-sql=true` or Hibernate statistics |
 | EF Core | `LogTo(Console.WriteLine)` |
 
-Fix with the ORM's eager loading or batching (`include`, `relations`, `selectinload`/`joinedload`, `select_related`/`prefetch_related`, `includes`, `Preload`, `JOIN FETCH`, `Include`), or a dataloader for GraphQL resolvers. Watch for the opposite problem: one huge join that returns duplicated rows.
+Fix with the ORM's eager loading or batching (`include`, `relations`, `selectinload`/`joinedload`, `select_related`/`prefetch_related`, `includes`, `Preload`, `JOIN FETCH`, `Include`), or a dataloader for GraphQL resolvers. A hand-written batch query binds the id list as an array (see Safe Query Shapes below) and keeps the owner predicate the per-row query had. Watch for the opposite problem: one huge join that returns duplicated rows.
+
+Query logs can print bound values. Keep them local, and never paste logged values that contain PII or secrets into tests, reports or memory.
 
 ## Profilers per Stack
 
@@ -83,6 +86,20 @@ Heap dumps and profiles can contain secrets and PII from memory. Keep them out o
 - Point load only at a local process. Load against a shared or production environment is Always Ask First: it can cause an outage and cost money.
 - Keep runs short and within Command Time Budgets. Compare the same scenario before and after.
 
+## Safe Query Shapes for Performance Fixes
+
+A faster query must stay injection-proof and owner-scoped. Every rewrite follows `<shared>/sql-safety.md`; the cases that come up most when tuning:
+
+- **Dynamic ORDER BY** (sort for an index-friendly plan): map the client's sort key and direction through a server-side allowlist to fixed column names and `ASC`/`DESC`; reject unknown values with 400. Never pass the client string to `ORDER BY`, `orderByRaw`, `.order()` or `Order()`.
+- **IN lists** (batching away an N+1): bind the list as an array (`WHERE id = ANY($1)`, expanding bindparams, `sqlx.In` + `Rebind`, `inArray`) and cap its length. Never `join(",")` ids into the SQL text, even when they are "just integers".
+- **LIKE / search**: escape `\`, `%` and `_` in the value, bind it, and add `ESCAPE '\'`. A leading `%` cannot use a B-tree index; the performance fix is a trigram or full-text index (through `backend-migrate`) with a bound query, not a hand-built pattern.
+- **Keyset pagination** (replacing a slow `OFFSET`): the cursor values are bound parameters; decode and validate the cursor, and keep the sort columns from the allowlist.
+- **Bulk insert or upsert**: use the driver's batch or multi-row API with bound values (`unnest($1::int[], $2::text[])`, `executemany`, `COPY` from a stream), not a VALUES string built in a loop.
+- **Removing ORM overhead with raw SQL**: use the stack's safe raw API (tagged templates, `text()` with bind params, `?` placeholders), never the `Unsafe`/`raw`/`literal` variants with input.
+- **Owner predicate**: a rewrite, join or cache key must keep `tenant_id`/`owner_id` from the authenticated principal. Dropping it to get a better plan is a BOLA bug, not an optimization.
+
+When you `EXPLAIN` a query locally, it is fine to paste literal values into the statement you run by hand; the code that ships still binds them.
+
 ## Regression Tests for Performance
 
 Wall-clock assertions are flaky. Prefer deterministic proxies:
@@ -96,9 +113,9 @@ Wall-clock assertions are flaky. Prefer deterministic proxies:
 
 | Cause | Fix | Owner |
 |---|---|---|
-| N+1 queries | Eager load or batch | this skill |
+| N+1 queries | Eager load or batch with array binding | this skill |
 | Missing or wrong index | New index (built `CONCURRENTLY` on PostgreSQL) | `backend-migrate` |
-| Unbounded result set | Pagination, `LIMIT`, streaming | this skill; contract changes via `backend-api-design` |
+| Unbounded result set | Pagination (bound `LIMIT`, keyset cursor), streaming | this skill; contract changes via `backend-api-design` |
 | Repeated expensive reads | Caching with invalidation | `backend-ops` |
 | Pool exhaustion | Release connections on error paths here; pool sizing in `backend-ops` | both |
 | Slow outbound dependency | Timeout here; circuit breaker, bulkhead, retry policy in `backend-ops` | both |

@@ -18,7 +18,7 @@ Not for: fixing production bugs (`backend-debug`), building features (`backend-i
 
 ## Before You Start
 
-1. Resolve the shared docs folder ("<shared>"): first `_shared/` inside this skill's folder (bundled installs, e.g. Claude.ai), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
+1. Resolve the shared docs folder ("<shared>"): first `_shared/` inside this skill's folder (bundled installs), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
 2. Read `<shared>/tool-rules.md` (mode=auto contract, Production Targets, Test Integrity, Command Time Budgets, checkpoints) and `<shared>/host-tools.md` if the actions below don't map clearly to your host's tools. Read `<shared>/memory-schema.md` -> test-strategy.md before writing that file.
 3. Load project memory per `<shared>/context-loading.md`: priorities 1-2 always, 6 (`test-strategy.md`) always, 3 (`db-schema.md`) for integration tests, 4 (`api-patterns.md`) for endpoint or contract tests, and `issues.md` for intents repair and reproduce. If memory is missing, run `backend-scan` first when possible; otherwise continue from the manifests and say so in the summary.
 4. If the detected stack matches a file in `<shared>/stacks/`, read it (its Testing and Local and Test Setup sections in particular).
@@ -81,6 +81,7 @@ Pick the layer for each behavior. Optimize for confidence and speed:
 Add the cases that matter for the code under test:
 
 - Endpoints with auth: the 401/403/ownership/tenant matrix in `references/api-and-auth-tests.md`. When `backend-auth` or `backend-db-design` hands over a matrix, every row becomes a test.
+- Endpoints that take user-controlled search, filter, sort, id or free-text parameters, or that read or write tenant- or user-owned rows: the security negative tests in `references/security-tests.md` (SQL and NoSQL injection payloads, LIKE wildcards, sort allowlist, cross-tenant ids). They are required by `<shared>/sql-safety.md` -> Verification, and a failing one is an implementation bug for `backend-debug`, never a test to loosen.
 - Consumers, jobs, webhooks, idempotency keys, and code with concurrent writers: `references/async-and-concurrency-tests.md`.
 - Intent **reproduce**: one test that fails on current code for the reported reason (Step 6 has the handoff).
 - Intent **coverage**: start from the coverage report, not a guess; target uncovered business logic and error branches.
@@ -158,5 +159,6 @@ For intent **run**, only the first, third and fourth bullets apply (no files are
 - `references/frameworks-and-commands.md`: read in Steps 1, 5 and 6 to detect the runner and package manager, for run and single-test commands per stack, coverage commands and metrics, choosing a framework, and flaky-test handling.
 - `references/fixtures-and-mocking.md`: read in Step 4 when writing factories, fakes, HTTP or time mocks, or setting up a disposable test database and per-test isolation.
 - `references/api-and-auth-tests.md`: read when testing endpoints, contract conformance against an OpenAPI spec, or authentication and authorization (401/403, ownership, tenant isolation, token cases).
+- `references/security-tests.md`: read when the feature takes user-controlled query parameters (search, filter, sort, id, free text, JSON filter bodies) or touches tenant- or user-owned data, for injection and cross-tenant negative tests in Vitest + Supertest and pytest + httpx. Rules come from `<shared>/sql-safety.md`.
 - `references/async-and-concurrency-tests.md`: read when testing queue consumers, retries and DLQs, webhooks, scheduled jobs, idempotency keys, concurrent writes, or transaction rollback.
 - `references/memory-and-report.md`: read in Step 7 for the test-strategy.md entry format and the Test Work Summary template.

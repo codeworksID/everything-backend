@@ -29,8 +29,8 @@ Not this skill:
 
 ## Before You Start
 
-1. Resolve the shared docs folder (`<shared>`): first `_shared/` inside this skill's folder (bundled installs, e.g. Claude.ai), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
-2. Read `<shared>/tool-rules.md` (mode=auto contract, checkpoints) and `<shared>/host-tools.md` if the action names below don't map clearly to your host's tools. Read `<shared>/principles.md` -> Security. If it is missing, warn once and use this skill's Non-Negotiable Rules as the baseline.
+1. Resolve the shared docs folder (`<shared>`): first `_shared/` inside this skill's folder (bundled installs), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
+2. Read `<shared>/tool-rules.md` (mode=auto contract, checkpoints) and `<shared>/host-tools.md` if the action names below don't map clearly to your host's tools. Read `<shared>/principles.md` -> Security and `<shared>/sql-safety.md` (rules for every query the auth core, repositories, and login touch). If either is missing, warn once and use this skill's Non-Negotiable Rules as the baseline.
 3. Load project memory per `<shared>/context-loading.md`: `project-overview.md`, `tech-stack.md`, `api-patterns.md` (existing auth conventions), and `db-schema.md` (user and membership tables). Load `decisions.md` for prior auth decisions and `issues.md` in review mode. If memory is empty, run `backend-scan` first when possible; otherwise continue from the manifest and code.
 4. If the detected stack matches a file in `<shared>/stacks/` (e.g. `node-typescript.md`, `python-fastapi.md`, `postgres.md`), read it for library and framework wiring.
 
@@ -79,6 +79,7 @@ Output: token/session design and credential-flow decisions.
 - One authorization gate answers "can this principal do this action on this resource?"
 - Roles map to permissions in one matrix. In multi-tenant systems roles are tenant-scoped.
 - Request DTOs allowlist fields; clients can never set `role`, `tenant_id`, or ownership through generic updates.
+- A WHERE clause is not an access check: every by-id read and write of tenant- or user-owned data binds `tenant_id` (and the owner) from the principal in the same statement, as bound parameters (`<shared>/sql-safety.md` -> The Rules, rule 3; snippets in `references/authorization.md` -> Tenant-Scoped Authorization).
 
 Output: AuthZ model (RBAC/ABAC/ownership), permission matrix, tenancy enforcement.
 
@@ -98,7 +99,7 @@ Write, in this order, using the stack file for library calls:
 1. Token/session verification module (Non-Negotiable Rules).
 2. `authenticate` middleware: attach the verified principal or continue as anonymous; invalid token -> 401; infrastructure errors propagate as 5xx. `requireAuth`, `requireRole` / `requirePermission`.
 3. Password hashing and verify (with rehash and dummy-hash), recovery, MFA, as in scope.
-4. Authorization gate and tenant-scoped repository helpers.
+4. Authorization gate and tenant-scoped repository helpers: every by-id query binds the id and the owner predicate from the principal with bound parameters; writes are bounded (`<shared>/sql-safety.md` -> The Rules, rules 1, 3, 4).
 5. Security defaults: CSRF, cookie flags, headers, CORS, rate limits.
 6. Audit logging for auth events.
 
@@ -124,6 +125,8 @@ Output: memory entries written.
 Done when:
 - Build, lint, and type-check pass for touched files.
 - Tests exist and pass for, at minimum: expired, forged-signature, `alg: none`, wrong-`iss` and wrong-`aud` tokens rejected with 401; a user denied another user's resource; a tenant A principal denied tenant B's resource (404) including a spoofed `tenant_id`; a cookie-authenticated state-changing request without a valid CSRF token rejected (403); refresh-token reuse revoking the family (if refresh tokens exist); identical responses for unknown user and wrong password.
+- Hostile-input and cross-tenant negative tests exist and pass per `<shared>/sql-safety.md` -> Verification, item 4 (the Injection and Tenancy rows of the matrix): injection payloads in id, filter, sort, and search parameters, operator objects in login bodies, and another tenant's or user's id on read, update, and delete return 400 or 404, never extra rows, a 500, or a changed row count.
+- No query the auth core or its repositories run lacks the owner predicate or builds SQL from strings with untrusted input (`<shared>/sql-safety.md` -> Verification, item 5). If one does, the change is not done.
 - `decisions.md` and `api-patterns.md` -> Authentication are updated.
 - Schema changes are handed to `backend-migrate`, not applied here.
 
@@ -165,7 +168,7 @@ These hold in every mode and every stack. Detail and per-library calls: `referen
 
 **Authorization and tenancy**
 - `tenant_id` and user identity come only from the verified principal, never from body, query, or headers unless membership is checked server-side.
-- Every query on tenant-owned data is tenant-filtered (scoped repository or RLS with transaction-local `set_config`); cross-tenant lookups return 404.
+- Every query on tenant- or user-owned data binds the owner predicate from the principal (`WHERE id = $1 AND tenant_id = $2`), never from the request (`<shared>/sql-safety.md` -> The Rules, rule 3). RLS with transaction-local `set_config` is a second layer, not a replacement. Cross-tenant lookups return 404.
 - Roles are tenant-scoped; platform operator roles are separate, MFA-protected, and audited.
 - Rate-limit auth endpoints with a shared store; use temporary or progressive lockout, never permanent.
 
@@ -201,6 +204,6 @@ Review mode returns the findings list (severity-ordered, with evidence and next 
 - `references/authn-mechanisms.md`: read when choosing a mechanism, configuring an OAuth/OIDC client, SSO/SCIM, API keys or webhook secrets, or deciding build vs buy.
 - `references/tokens-and-sessions.md`: read when writing JWT verification, refresh rotation, revocation, signing-key rotation, token storage, or session hardening.
 - `references/credentials.md`: read when building signup, login, password hashing, password policy, account recovery, MFA, or the identity tables to hand off.
-- `references/authorization.md`: read when designing roles, permission matrices, ownership checks, tenant isolation/RLS, mass-assignment protection, or writing auth middleware.
+- `references/authorization.md`: read when designing roles, permission matrices, ownership checks, tenant isolation/RLS, tenant- or owner-scoped repository queries, mass-assignment protection, or writing auth middleware.
 - `references/security-defaults.md`: read when adding rate limiting, security headers, CORS, CSRF protection, or secret handling.
 - `references/verification-and-review.md`: read when building the negative-test matrix, running review mode, or writing the design doc and memory entries.

@@ -11,15 +11,19 @@ IDs refer to docs/audit/2026-10-31-findings-detail.md.
 
 ### Added
 
-- **Claude support**: Claude Code plugin (`.claude-plugin/plugin.json`, `marketplace.json`) with a `PreToolUse` guard hook (`hooks/`); installer targets `~/.claude/skills` and `<project>/.claude/skills` (`--host claude`); `npm run build:claude` builds self-contained Claude.ai zips with `_shared/` bundled per skill (F218).
+- **Claude support**: Claude Code plugin (`.claude-plugin/plugin.json`, `marketplace.json`) with a `PreToolUse` guard hook (`hooks/`); installer targets `~/.claude/skills` and `<project>/.claude/skills` (`--host claude`); `npm run build:claude` builds the Claude.ai bundle (see below) (F218).
 - **Host-neutral skills**: actions instead of OpenCode tool names; `_shared/host-tools.md` maps them per host, documents enforcement per host and install locations (F050).
 - **Enforcement scripts**: `_shared/scripts/checkpoint.js` (start/backup/record/snapshot/status/rollback/close; patch-based undo) and `_shared/scripts/guard.js` (classifies destructive git, migration, SQL, deploy/infra and delete commands as Always Ask First), with `scripts/test-scripts.js` (F088).
 - **backend-debug** (bug triage and fixing, F040) and **backend-security** (threat model, OWASP API Top 10, secrets, SAST, supply chain, F054).
 - **Stack references**: `_shared/stacks/postgres.md`, `node-typescript.md`, `python-fastapi.md`.
 - **Memory schemas** for `test-strategy.md` and `deployment.md` (F016); secrets/PII and trust-boundary rules (F015, F096).
 
+- **SQL and query safety** (`_shared/sql-safety.md`): one mandatory rule set for every skill that writes, reviews, tests or fixes queries. It requires bound parameters only and allowlisted identifiers. It also requires an owner predicate from the authenticated principal on every tenant- or user-owned row, because a WHERE clause is not an access check. It adds a per-stack safe/unsafe API table, NoSQL injection rules, least-privilege DB roles, and hostile-input negative tests before a change counts as done.
+- **Claude.ai bundle**: `npm run build:claude` builds one skill, `dist/claude/everything-backend.zip`, that contains every sub-skill. The entry `SKILL.md` checks the bundle against `MANIFEST.json` (SHA-256 per file) with `verify.js` / `verify.py`, and stops on a partial or modified install. Per-skill zips are no longer built.
+
 ### Changed
 
+- **guard.js `database-write`** (was `destructive-sql`): asks before any SQL, MongoDB or Redis statement that is not a plain read. That includes UPDATE/DELETE **with** a WHERE clause (`WHERE 1=1` deletes everything), INSERT, MERGE, DDL, GRANT, COPY, side-effect functions (`setval`, `pg_terminate_backend`, `dblink`), `EXPLAIN ANALYZE` of a write, `SELECT ... INTO`, psql `\i`/`\copy`/`\!`, and unknown statements.
 - **Progressive disclosure**: every SKILL.md is a lean workflow (all under 210 lines; visualize went from 722 to 171), with templates and catalogs in `<skill>/references/` (F120, F092).
 - **backend-deploy**: numbered workflow, outputs and exit criteria, Kubernetes manifests, Dockerfiles per stack, release strategy, rollback, post-deploy verification, gated expand -> deploy -> contract migration step (F058, F060, F063, F028, F057).
 - **backend-ops**: resilience patterns and backup/restore/DR (F066, F068).

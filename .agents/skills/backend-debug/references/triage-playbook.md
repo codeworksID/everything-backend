@@ -12,6 +12,7 @@ Symptom-first checks for Step 4 (find the root cause). Each section lists what t
 - Memory leaks
 - Deadlocks and lock waits
 - Race conditions
+- SQL/NoSQL injection and BOLA (another tenant's or user's row)
 - Works locally, fails in CI or another environment
 
 ## General Techniques
@@ -76,7 +77,7 @@ Fix: release resources in `finally`/context managers, set explicit timeouts, mov
 Collect: an example of the wrong output, the expected output, and the stored rows that produced it (synthetic copies, never production PII).
 
 Common causes:
-- Missing tenant or ownership filter in a query (also a security bug: log it High and see `backend-auth` rules).
+- Missing tenant or ownership filter in a query. This is a security bug (BOLA), not only wrong data: follow the "SQL/NoSQL Injection and BOLA" section below.
 - Time zones: local time stored as UTC or the reverse, date boundaries computed in the server's zone, DST.
 - Number handling: floats for money, integer overflow, rounding at the wrong step, string vs number comparisons.
 - Encoding and casing: Unicode normalization, case-sensitive lookups, trimming.
@@ -152,6 +153,38 @@ Common causes:
 Test: run the two operations concurrently in a loop (e.g. `Promise.all`, `asyncio.gather`, goroutines with `-race` in Go) against a local database, and assert the invariant holds.
 
 Fix: enforce the invariant in the database (unique constraint, conditional update `UPDATE ... WHERE balance >= :amount`, optimistic version column) or with an explicit lock; make handlers idempotent with a key. Schema constraints go through `backend-migrate`.
+
+## SQL/NoSQL Injection and BOLA
+
+`<shared>/sql-safety.md` is the rule set for this section; read it fully before fixing. This section only adds the debug loop.
+
+Signals that point here:
+- A 500 with a raw driver error (`syntax error at or near`, `unterminated quoted string`, `You have an error in your SQL syntax`) when the input contains `'`, `\`, `;` or `--`.
+- A search, filter or sort parameter that changes the result in ways the code should not allow: extra rows, a different column order, a slow response for a crafted value.
+- A name like `O'Brien` that fails to save or find.
+- A login or lookup that succeeds with a JSON object where a string was expected (`{"$ne": null}`).
+- A user or tenant who can read, change or delete a row they do not own by changing an id in the path, query or body.
+
+Collect: the endpoint, the parameter, the payload that shows the bug, and the query the code actually sends (query logging, see `performance.md` -> N+1 Detection). Then read the repository/DAO code that builds it. Look for the unsafe patterns in `_shared/sql-safety.md` -> Safe vs Unsafe APIs per Stack, for a client value used as a column, table or sort name, and for a WHERE clause on `id` with no owner predicate.
+
+Reproduce locally only (Production Targets apply). Never send hostile payloads to a shared, staging or production environment: that is an attack on a live system, and it is Always Ask First even when the user owns it. Use the full hostile payload list in `_shared/sql-safety.md` -> Verification, step 4 (value, sort/field, JSON operator and other-owner cases). For ownership, authenticate as user or tenant A and request B's id.
+
+Test: write these as the failing tests in Step 3, at the integration or contract level against a local database (follow `backend-test` -> security tests). Each asserts a 400, or an empty or own-tenant result, and never extra rows, a 500, a leaked SQL error, or a changed row count. For BOLA, assert 404 (or 403, per the project's convention) for the other owner's id on every verb the endpoint supports (GET, PUT/PATCH, DELETE), and that the other owner's row is unchanged.
+
+Fix, by cause:
+- Value concatenated into SQL: bind it as a parameter with the safe API for the stack. Do not "escape" or strip quotes by hand.
+- Client value used as an identifier (sort, column, table, direction): map it through a server-side allowlist and reject anything else with 400.
+- `IN` list built with `join`: use array binding (`= ANY($1)`, expanding bindparams, `sqlx.In`) with a length cap.
+- LIKE search: escape `\`, `%`, `_` in the value, bind it, and add `ESCAPE '\'`.
+- ORM raw/unsafe API with input: switch to the safe variant.
+- Dynamic SQL in a stored procedure: `format('%I')` for identifiers and `USING` for values.
+- NoSQL operator injection: reject non-scalar values where a scalar is expected and keys starting with `$`; enable the driver's sanitize option.
+- Missing owner predicate (BOLA): add `AND tenant_id = $n` (or `owner_id`) bound from the authenticated principal, never from the request, on every read and every UPDATE/DELETE for that resource.
+- Driver error returned to the client: map it to a generic error and log details server-side without values.
+
+Input validation is defense in depth, not the fix: a schema that rejects `'` does not make string-built SQL safe.
+
+Then search the codebase for the same pattern (Step 5). Every other occurrence reachable from an endpoint is the same class of bug: fix the ones in the same flow, log the rest in `issues.md` with severity per `_shared/sql-safety.md` -> Verification, step 5 (Critical if reachable from a public or low-privilege endpoint, High otherwise), and suggest `backend-security` for a wider review. Before reporting done, run the full Verification list in `_shared/sql-safety.md` on every changed file.
 
 ## Works Locally, Fails Elsewhere
 

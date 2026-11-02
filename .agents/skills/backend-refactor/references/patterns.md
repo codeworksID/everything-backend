@@ -71,7 +71,9 @@ Use these to propose module boundaries. In SKILL.md Step 4 the proposal is shown
 6. Inject adapters through the composition root or DI container.
 7. Use fakes for the adapters in unit tests.
 
-**Verification**: the target module imports no concrete infrastructure packages; its unit tests run with no database or HTTP server.
+When the extracted adapter is a repository, move each query exactly: keep its bound parameters and owner predicate. The port takes the owner as an argument (`findOrder(tenantId, orderId)`, not `findOrder(orderId)`), so a caller cannot forget it. Do not widen a method into a generic `findBy(column, value)` or `query(sqlString)` that callers feed raw input; if a sort or filter field must be dynamic, the adapter maps it through a fixed allowlist (`_shared/sql-safety.md` -> The Rules, 2-3).
+
+**Verification**: the target module imports no concrete infrastructure packages; its unit tests run with no database or HTTP server; every moved query keeps its placeholders and owner predicate (`_shared/sql-safety.md` -> Verification, steps 1-2).
 
 ## Dependency Inversion / Ports-and-Adapters
 
@@ -98,6 +100,8 @@ Use these to propose module boundaries. In SKILL.md Step 4 the proposal is shown
 3. Apply the change one function or module at a time. A tool-driven mechanical change (codemod, IDE or LSP rename, namespace bump) that cannot be split may be one increment; see the size rule in SKILL.md Step 5.
 4. Run the tests after each change.
 5. Update lint rules or type definitions if the modernization changes conventions.
+
+When moving to a new ORM or query API, map each call to the safe variant in `_shared/sql-safety.md` -> Safe vs Unsafe APIs per Stack. A raw query that was parameterized must not become `$queryRawUnsafe`, `sql.raw`, `knex.raw` with interpolation, `text(f"...")`, `Sprintf` into SQL, MyBatis `${}` or `FromSqlRaw` with concatenation.
 
 Watch for behavior drift that tests often miss: error types thrown vs. returned, unhandled promise rejections, changed default timeouts, and changed serialization (dates, decimals, null vs. missing).
 

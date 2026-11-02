@@ -1,6 +1,6 @@
 # Authorization, Tenancy and Middleware
 
-Read this when designing roles and permissions, multi-tenant isolation, or writing the authenticate/authorize middleware. For framework wiring, see the matching file in `<shared>/stacks/`.
+Read this when designing roles and permissions, multi-tenant isolation, tenant- or owner-scoped repository queries, or writing the authenticate/authorize middleware. For framework wiring, see the matching file in `<shared>/stacks/`.
 
 ## Where Checks Run (one rule)
 
@@ -34,12 +34,14 @@ Permission matrix template:
 - Verify the actor owns the resource or holds an explicit grant.
 - In multi-tenant systems, check the tenant first, then owner or role.
 - Return 404 (not 403) when the resource belongs to another tenant, so existence is not revealed.
+- The ownership check is not only an `if` in the service: the query itself binds the tenant (and the owner for user-owned rows), as in the repository below.
 
 ```typescript
 // Tenant-scoped ownership check in the service layer.
 // principal comes from the verified token or session, never from body, query, or headers.
-const resource = await repo.findById(principal.tenantId, id); // query filters by tenant_id
-if (!resource || resource.tenantId !== principal.tenantId) {
+// repo.findById binds id AND tenant_id as parameters (see Tenant-Scoped Authorization).
+const resource = await repo.findById(principal.tenantId, id);
+if (!resource || resource.tenantId !== principal.tenantId) { // defense in depth
   throw new NotFoundError(); // do not reveal another tenant's resource
 }
 if (resource.ownerId !== principal.userId && !principal.roles.includes('admin')) {
@@ -47,10 +49,51 @@ if (resource.ownerId !== principal.userId && !principal.roles.includes('admin'))
 }
 ```
 
-## Tenant Isolation
+## Tenant-Scoped Authorization
 
-- Take `tenant_id` only from the authenticated principal (verified claim or server-side session). Ignore tenant IDs in the body, query, or headers such as `X-Tenant-ID` unless the server checks that the principal is a member of that tenant.
-- Filter every query on tenant-owned tables by `tenant_id` through a tenant-scoped repository, or enforce it with Postgres row-level security (RLS).
+This is the auth side of `<shared>/sql-safety.md` -> The Rules, rule 3 ("A WHERE clause is not an access check"). That file owns the query rules (bound parameters, allowlisted identifiers, bounded writes, array binding); this section adds only where the owner value comes from.
+
+- Take `tenant_id` and the user ID only from the authenticated principal (verified claim or server-side session). Ignore tenant IDs in the body, query, or headers such as `X-Tenant-ID` unless the server checks that the principal is a member of that tenant.
+- Every read, update, and delete of a tenant- or user-owned row binds the owner predicate from the principal in the same statement: `WHERE id = $1 AND tenant_id = $2` (plus `AND owner_id = $3` for user-owned rows). `WHERE id = $1` alone, with a client-supplied id, is BOLA/IDOR (OWASP API1) even when the query is parameterized.
+- Loading by id and checking ownership afterwards in code is not enough for writes: the UPDATE or DELETE itself carries the owner predicate, so a race or a missed `if` cannot change another tenant's row. Zero affected rows means 404.
+- Filter every query on tenant-owned tables through a tenant-scoped repository. Postgres row-level security (RLS) is a second layer, not a replacement for the bound predicate.
+
+```typescript
+// Tenant-scoped repository (node-postgres). Values are always bound ($1, $2, ...);
+// tenantId and ownerId come from the principal, never from the request.
+export const orderRepo = {
+  async findById(tenantId: string, id: string) {
+    const r = await db.query(
+      'SELECT id, tenant_id, owner_id, status FROM orders WHERE id = $1 AND tenant_id = $2',
+      [id, tenantId],
+    );
+    return r.rows[0] ?? null; // another tenant's id -> null -> 404
+  },
+
+  // User-owned write: id, tenant and owner are all in the WHERE. 0 rows -> 404.
+  async updateStatusOwned(tenantId: string, ownerId: string, id: string, status: OrderStatus) {
+    const r = await db.query(
+      'UPDATE orders SET status = $1 WHERE id = $2 AND tenant_id = $3 AND owner_id = $4',
+      [status, id, tenantId, ownerId],
+    );
+    return r.rowCount === 1;
+  },
+
+  // Bulk delete: ids validated as UUIDs at the boundary, size-capped, bound as an array,
+  // still tenant-scoped (add AND owner_id = $3 for user-owned rows).
+  async deleteMany(tenantId: string, ids: string[]) {
+    if (ids.length === 0 || ids.length > 100) throw new ValidationError('ids');
+    const r = await db.query(
+      'DELETE FROM orders WHERE id = ANY($1::uuid[]) AND tenant_id = $2',
+      [ids, tenantId],
+    );
+    return r.rowCount;
+  },
+};
+// An admin path that may act on any row in the tenant uses its own fixed query that binds
+// id and tenant_id only, and is reached only after the authorization gate allows it.
+```
+
 - With RLS:
   - Set the tenant at the start of each transaction with the parameterized `SELECT set_config('app.tenant_id', $1, true)` (`true` = transaction-local, like `SET LOCAL`). `SET` cannot take bind parameters, so never build it by string interpolation.
   - Write policies as `tenant_id = current_setting('app.tenant_id', true)::uuid`, so a missing setting yields NULL and matches no rows.

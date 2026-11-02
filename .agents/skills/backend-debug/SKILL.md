@@ -22,15 +22,16 @@ Not for:
 
 ## Before You Start
 
-1. Resolve the shared docs folder ("<shared>"): first `_shared/` inside this skill's folder (bundled installs, e.g. Claude.ai), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
+1. Resolve the shared docs folder ("<shared>"): first `_shared/` inside this skill's folder (bundled installs), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
 2. Read `<shared>/tool-rules.md` (mode=auto contract, Production Targets, Test Integrity, checkpoints) and `<shared>/host-tools.md` if the action names below don't match your host's tools. Read `<shared>/principles.md` (applied to every fix) and `<shared>/memory-schema.md` -> issues.md and decisions.md before writing memory.
 3. Load project memory per `<shared>/context-loading.md`: `project-overview.md`, `tech-stack.md`, `issues.md` (the bug may be known), and `test-strategy.md` (test conventions). Load `api-patterns.md` for endpoint bugs and `db-schema.md` for data bugs. If memory is missing, do not stop: find the manifest and test runner yourself and suggest `backend-scan` in the report.
 4. If the detected stack matches a file in `<shared>/stacks/`, read it.
+5. If the bug or its fix touches a query (SQL, ORM, NoSQL, search), read `<shared>/sql-safety.md` fully. It is the rule set for every query this skill changes.
 
 ## References
 
-- `references/triage-playbook.md`: read when localizing a cause by symptom (500s, timeouts, wrong data, flaky tests, memory leaks, deadlocks, race conditions), and for bisect and temporary-logging rules.
-- `references/performance.md`: read when the bug is "slow", a latency or throughput regression, high CPU or memory, or a suspected N+1 query.
+- `references/triage-playbook.md`: read when localizing a cause by symptom (500s, timeouts, wrong data, flaky tests, memory leaks, deadlocks, race conditions, SQL/NoSQL injection, one user or tenant reaching another's rows), and for bisect and temporary-logging rules.
+- `references/performance.md`: read when the bug is "slow", a latency or throughput regression, high CPU or memory, or a suspected N+1 query; its "Safe Query Shapes" section applies to every query rewrite (dynamic ORDER BY, IN lists, LIKE search, pagination, bulk writes).
 
 ## mode=auto
 
@@ -123,6 +124,7 @@ Start a checkpoint before the first edit: `node <shared>/scripts/checkpoint.js s
 - Change as little as possible. No renames, reformatting of untouched code, dependency bumps or opportunistic cleanup. Note cleanups for `backend-refactor`.
 - Search for the same faulty pattern elsewhere. Fix other occurrences only when they are the same bug in the same flow; list the rest in `issues.md`.
 - Apply the stack rules in `<shared>/stacks/` and `<shared>/principles.md` to the changed lines.
+- A fix that adds or changes a query follows `<shared>/sql-safety.md`: bound values, allowlisted identifiers, and the owner predicate from the authenticated principal on tenant- or user-owned rows. Never fix a query bug by escaping quotes by hand or building SQL from strings. If the bug is an injection or BOLA, use the playbook section "SQL/NoSQL Injection and BOLA".
 - A fix that needs a dependency upgrade, a schema change, a public contract change or CI/secret edits stops for confirmation or hands off (see Handoffs).
 
 Output: the diff of the fix. Done when only files tied to the bug and its test changed.
@@ -134,7 +136,8 @@ Output: the diff of the fix. Done when only files tied to the bug and its test c
 3. Run lint and type-check (or LSP diagnostics if available) on changed files.
 4. Re-run the Step 2 reproduction: the symptom must be gone.
 5. Remove every temporary log and debug statement: search for the marker and confirm zero hits.
-6. If the fix fails twice for the same reason, stop and report instead of looping.
+6. If any query changed, run `_shared/sql-safety.md` -> Verification on the changed files (static search, read each changed DAO file, SAST if available, hostile-payload negative tests). A failed check means the fix is not done.
+7. If the fix fails twice for the same reason, stop and report instead of looping.
 
 Output: test and check results, each marked passed, failed or did not complete. Done when the failing test passes, the suite has no new failures, and no debug code remains.
 
@@ -171,6 +174,7 @@ Close the checkpoint: `node <shared>/scripts/checkpoint.js close --skill backend
 
 - **Schema change needed** (missing constraint, wrong column type, index for a slow query): stop at the code side. Write the failing test and the root cause, then hand the change to `backend-migrate`. This skill never writes or applies migrations.
 - **Auth or authorization bug**: follow `backend-auth` rules (JWT verification, CSRF, tenant-scoped authorization, credential handling). Never fix an auth bug by removing or loosening a check. If the bug is exploitable, mark it High or Critical in `issues.md` and suggest `backend-security` for a wider review.
+- **Injection or BOLA bug**: fix it here with the playbook section and `<shared>/sql-safety.md`; severity per its Verification step 5 (Critical if reachable from a public or low-privilege endpoint). Log other occurrences in `issues.md` and suggest `backend-security`.
 - **Performance regression**: follow `references/performance.md`. Caching, pooling and queue changes go to `backend-ops`.
 - **Production incident**: read-only triage here; mitigation is Always Ask First; runbooks and resilience changes go to `backend-ops`; deploy or rollback goes to `backend-deploy` with confirmation.
 - **Missing feature disguised as a bug**: `backend-implement`.
@@ -186,4 +190,5 @@ To undo this run's changes, use `node <shared>/scripts/checkpoint.js rollback --
 - The suite has no new failures, and every check that did not run is reported as such.
 - The root cause is written down with evidence, in the report and in `issues.md`.
 - No temporary logging remains and no unrelated changes are in the diff.
+- Any changed query passes `<shared>/sql-safety.md` -> Verification.
 - The checkpoint is closed.

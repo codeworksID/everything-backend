@@ -47,13 +47,15 @@ Contract rules:
 ## Search
 
 - `GET /{resource}?q=term` with the normal filters, sort and pagination.
-- Allowlist searchable fields and set a max length on `q`.
+- Allowlist searchable fields and set a `maxLength` on `q` (for example 100) in the spec. `q` is plain text, not a query language: no field operators, boolean syntax or regex unless the design defines a small grammar the server parses into bound values.
+- `%` and `_` in `q` match literally; the server escapes them and binds the value (`_shared/sql-safety.md` rule 6). For a search engine, the server builds a structured query and never passes `q` into `query_string` or a script (rule 9).
 - Return a relevance score only if clients use it; sort by relevance when `q` is present unless `sort` is given.
 - Back it with a full-text index (database full-text search or a search engine); flag the index for `backend-db-design`.
 
 ## Bulk Operations
 
-- `POST /{resource}/batch` (or `:batchCreate`-style for gRPC) with an array and a max item count (for example 100).
+- `POST /{resource}/batch` (or `:batchCreate`-style for gRPC) with an array and a max item count (for example 100) as `maxItems` in the spec. Ids in the array use the typed `Id` schema with `uniqueItems: true`.
+- Bulk update and delete take an explicit id list, never a filter expression ("delete where ..."). Every item is checked against the caller's tenant or ownership; the server binds the list as an array plus the owner (`_shared/sql-safety.md` rules 3-5).
 - Decide and document: all-or-nothing (one transaction, any failure fails all) or per-item results.
 - Per-item results return 200 (or 207 if the project uses it) with one entry per input: `{"results": [{"index": 0, "status": 201, "data": {...}}, {"index": 1, "status": 422, "error": {...}}]}`.
 

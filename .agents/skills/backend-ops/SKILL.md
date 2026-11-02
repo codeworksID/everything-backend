@@ -25,7 +25,7 @@ Not for:
 
 ## Before You Start
 
-1. Resolve the shared docs folder ("<shared>"): first `_shared/` inside this skill's folder (bundled installs, e.g. Claude.ai), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
+1. Resolve the shared docs folder ("<shared>"): first `_shared/` inside this skill's folder (bundled installs), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
 2. Read `<shared>/tool-rules.md` (mode=auto contract, Production Targets, checkpoints) and `<shared>/host-tools.md` if the action names below don't match your host's tools. Read `<shared>/principles.md` -> System and Security. Read `<shared>/memory-schema.md` -> decisions.md, issues.md and tech-stack.md before writing memory.
 3. Load project memory per `<shared>/context-loading.md`: `decisions.md` (prior ops choices), `tech-stack.md` (language, framework, infra), `api-patterns.md` (hot paths to instrument and cache), `project-overview.md` (services and source roots), and `deployment.md` if present (health paths, platform). Load `issues.md` for audits. If memory is empty or stale, suggest `backend-scan`; if the user declines, continue from what the codebase shows. For a greenfield design request, work from the user's requirements.
 4. If the detected stack matches a file in `<shared>/stacks/`, read it.

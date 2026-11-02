@@ -17,7 +17,7 @@ Not this skill: diagrams only (backend-visualize), table design (backend-db-desi
 
 ## Before You Start
 
-1. Resolve the shared docs folder (`<shared>`): first `_shared/` inside this skill's folder (bundled installs, e.g. Claude.ai), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
+1. Resolve the shared docs folder (`<shared>`): first `_shared/` inside this skill's folder (bundled installs), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
 2. Read `<shared>/tool-rules.md` (mode=auto contract, checkpoints), `<shared>/principles.md` (all sections: Database, Code/Architecture, API, System, Security) and `<shared>/memory-schema.md` (decisions.md and project-overview.md formats). Read `<shared>/host-tools.md` if the action names below don't match your host's tools.
 3. Load project memory per `<shared>/context-loading.md`: project-overview.md, tech-stack.md and decisions.md always; db-schema.md and api-patterns.md when they exist. Then pick the branch:
    - **Greenfield** (no manifest and no source directories): do not stop and do not run backend-scan. Proceed with requirements; this skill's output bootstraps memory.

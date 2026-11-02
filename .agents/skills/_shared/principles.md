@@ -57,5 +57,6 @@ Apply these principles across all backend design, implementation, and review wor
 - **Least privilege and RBAC**: design role-based access control and resource ownership checks from the start.
 - **Audit logging**: log privileged actions, money movement, state transitions, and destructive operations; exclude passwords, tokens, and secrets.
 - **Input validation and sanitization**: reject malformed input and sanitize before business processing and logging.
+- **Injection-proof data access is mandatory**: bind every value as a parameter, take identifiers (sort, column, table) only from a server-side allowlist, and scope every read and write of a tenant- or user-owned row by the owner from the authenticated principal, because a WHERE clause is not an access check. Rules, per-stack safe APIs and the required verification are in `sql-safety.md`; a change that breaks them is not done.
 - **Secrets management**: load secrets from environment variables or secret managers; rotate keys; never commit credentials.
 - **Transport security**: use `Secure`, `httpOnly`, and `SameSite` cookie attributes; set security headers; restrict CORS origins.

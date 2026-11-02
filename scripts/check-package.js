@@ -412,6 +412,32 @@ function checkHooks() {
   }
 }
 
+// The Claude.ai bundle must contain and route every skill; buildBundle() throws otherwise.
+function checkClaudeBundle() {
+  const entryPath = path.join(repoRoot, "packaging", "claude-ai", "SKILL.md");
+  if (!fs.existsSync(entryPath)) {
+    errors.push("packaging/claude-ai/SKILL.md: missing (Claude.ai bundle entry point)");
+    return;
+  }
+  const parsed = parseFrontmatter(readText(entryPath));
+  const fm = parsed && parsed.fields;
+  if (!fm || fm.name !== "everything-backend") errors.push('packaging/claude-ai/SKILL.md: frontmatter name must be "everything-backend"');
+  const description = (fm && fm.description) || "";
+  if (!description || description.length > maxDescriptionLength || /[<>]/.test(description)) {
+    errors.push("packaging/claude-ai/SKILL.md: description must be 1-" + maxDescriptionLength + " characters without < or >");
+  }
+  try {
+    const { buildBundle } = require("./build-claude-skills.js");
+    const { entries, skills } = buildBundle();
+    const names = new Set(entries.map((e) => e.name));
+    for (const skill of skills) {
+      if (!names.has("everything-backend/skills/" + skill + "/SKILL.md")) errors.push("Claude.ai bundle: missing " + skill);
+    }
+  } catch (error) {
+    errors.push("Claude.ai bundle: " + error.message);
+  }
+}
+
 function main() {
   const pkg = checkPackageJson();
   const skillNames = listSkillDirectories();
@@ -422,6 +448,7 @@ function main() {
   checkFences();
   checkClaudePlugin(pkg);
   checkHooks();
+  checkClaudeBundle();
 
   for (const warning of warnings) {
     console.warn(`check-package: warning: ${warning}`);

@@ -29,12 +29,13 @@ If a request mixes a feature with a refactor, do the refactor first through `bac
 
 ## Before You Start
 
-1. Resolve the shared docs folder (`<shared>`): first `_shared/` inside this skill's folder (bundled installs, e.g. Claude.ai), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
+1. Resolve the shared docs folder (`<shared>`): first `_shared/` inside this skill's folder (bundled installs), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
 2. Read `<shared>/tool-rules.md` (mode=auto contract, Production Targets, Test Integrity, checkpoints), `<shared>/principles.md` (code, API, system and security principles that every change must follow), and `<shared>/host-tools.md` if the actions below don't match your host's tool names.
 3. Load project memory per `<shared>/context-loading.md`. Always load `tech-stack.md`, `project-overview.md`, `api-patterns.md` and `db-schema.md`. Load `decisions.md` only when the change raises an architecture, auth or cross-cutting question.
    - `tech-stack.md` missing and the stack cannot be inferred from manifests: run `backend-scan` first.
    - No design for the feature (no endpoint in `api-patterns.md`, no tables in `db-schema.md`, nothing from the user): run `backend-api-design` and/or `backend-db-design` first, or proceed only on a design the user gives in the request.
 4. If the detected stack matches a file in `<shared>/stacks/`, read it.
+5. Read `<shared>/sql-safety.md` before writing any query or repository code. Its rules are not optional: bound values, allowlisted identifiers, and an owner predicate from the authenticated principal on every tenant- or user-owned row.
 
 ## Workflow
 
@@ -67,6 +68,7 @@ node <shared>/scripts/checkpoint.js start --skill backend-implement --feature <s
 
 1. Generate or edit code layer by layer: repository, then service, then handler, then wiring. Use the shapes in [references/patterns.md](references/patterns.md).
 2. Apply `<shared>/principles.md`: thin transport, services own workflow and transactions, typed errors mapped centrally, validation at the boundary, no secrets in responses or logs.
+   - Every query follows `<shared>/sql-safety.md`. Sort and filter fields map through a server-side allowlist, and reads and writes of owned rows bind `tenant_id` or `user_id` from the authenticated principal, never from the request.
 3. Models and ORM entities may change here. The schema change itself goes to `backend-migrate` with the full column, index and constraint spec. Never turn on ORM auto-sync against anything but a disposable local database this run started.
 4. Auth code implements the decision `backend-auth` recorded. If none exists, stop that part and route to `backend-auth`.
 5. New dependencies pass the license gate below, and installing them always asks first.
@@ -76,9 +78,9 @@ Output: the changed files, recorded in the checkpoint.
 
 ### Step 4: Run the post-generation checklist
 
-Read [references/post-generation-checklist.md](references/post-generation-checklist.md) and run all nine checks against this run's files only: layering, transactions, SQL building, input validation, framework leaks, error mapping, suppressions, diagnostics, test coverage.
+Read [references/post-generation-checklist.md](references/post-generation-checklist.md) and run all eleven checks against this run's files only: layering, transactions, SQL building and unsafe raw APIs, input validation, framework leaks, error mapping, suppressions, diagnostics, test coverage, owner predicates, hostile-input tests.
 
-- Fix each finding, or list it with `file:line` and a one-line justification.
+- Fix each finding, or list it with `file:line` and a one-line justification. A string-built query, an unsafe raw API with input, or a missing owner predicate is never justified: fix it.
 - Run the tests you added and the existing suite, but only when every target is provably local (see `<shared>/tool-rules.md` -> Production Targets). Follow Test Integrity: never skip, delete or loosen a failing test to get green. If a failure is a bug outside this feature, hand it to `backend-debug`.
 
 Done when the checklist verdict is **clean**, or **incomplete** with each unrun check and the command the user should run.
@@ -140,7 +142,7 @@ Before adding a package, check its license in the registry metadata or the packa
 
 - [references/greenfield.md](references/greenfield.md): read when building a new service or module from a design (project layouts for Node, NestJS, FastAPI, Django, Go and Spring; what to generate per layer; decision trees for REST, GraphQL, database, auth and WebSocket).
 - [references/modify-workflows.md](references/modify-workflows.md): read when adding an endpoint, a field, middleware, or a query change to existing code.
-- [references/patterns.md](references/patterns.md): read when writing handlers, services or repositories (Express, FastAPI, Gin, Spring and service snippets; layering, transaction, idempotency and testing rules).
+- [references/patterns.md](references/patterns.md): read when writing handlers, services or repositories (Express, FastAPI, Gin, Spring, service and owner-scoped repository snippets; layering, transaction, idempotency and testing rules).
 - [references/post-generation-checklist.md](references/post-generation-checklist.md): read at Step 4, every run.
 
 ## Edge Cases

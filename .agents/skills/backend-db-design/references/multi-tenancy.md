@@ -50,6 +50,7 @@ CREATE POLICY tenant_isolation ON posts
 - The app role must not be a superuser and must not have `BYPASSRLS`.
 - Set the tenant per transaction with a parameterized `SELECT set_config('app.tenant_id', $1, true)`. The `true` makes it transaction-local, so pooled connections do not leak it. Do not use `SET LOCAL` with an interpolated literal.
 - Migrations and maintenance jobs run as a separate role; document which role bypasses RLS and why.
+- RLS is a second layer: queries still bind `tenant_id` from the auth context (`<shared>/sql-safety.md` rule 3). Roles, grants, timeouts, views and `SECURITY DEFINER` functions: `references/database-security.md`.
 
 ## 4. Required Tests
 

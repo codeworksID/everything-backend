@@ -16,7 +16,7 @@ const os = require("node:os");
 const CATEGORIES = [
   { id: "git-history", mode: "default", description: "Git commands that discard work or rewrite history (reset --hard, clean -f, checkout -- path, restore, push --force, branch -D, stash drop/clear)." },
   { id: "migration", mode: "default", description: "Commands that apply, revert or reset database migrations or push a schema to a database." },
-  { id: "destructive-sql", mode: "default", description: "SQL clients running DROP, TRUNCATE, ALTER, or DELETE/UPDATE without WHERE, or SQL from a file." },
+  { id: "database-write", mode: "default", description: "Any SQL, MongoDB or Redis statement that is not a plain read (INSERT/UPDATE/DELETE with or without WHERE, DDL, GRANT, COPY, side-effect functions, EXPLAIN ANALYZE of a write), client meta-commands that run a shell or read files, SQL built from shell variables, SQL from a file or stdin, and database tools that write (dropdb, createdb, pg_restore -d, mongorestore, mysqladmin other than status commands)." },
   { id: "deploy-infra", mode: "default", description: "Deploys, releases and infrastructure changes (kubectl, helm, terraform, pulumi, docker push, cloud CLIs, publish)." },
   { id: "recursive-delete", mode: "default", description: "Recursive deletes outside obvious build, cache and temp directories." },
   { id: "git-write", mode: "strict", description: "Any git ref write: commit, push, merge, rebase, switch/checkout, stash, reset, tag, branch changes." },
@@ -84,10 +84,12 @@ function tokenize(input, shell) {
       const last = seg.redirs.length ? seg.redirs[seg.redirs.length - 1] : null;
       if (last && last.target === undefined) last.target = word.value;
       else if (seg.expectHeredocDelim) {
-        pendingHeredocs.push({ seg, delim: word.value.replace(/^-/, "") });
+        // A quoted delimiter (<<'EOF') turns off $var and $(...) expansion in the body.
+        pendingHeredocs.push({ seg, delim: word.value.replace(/^-/, ""), literal: word.quoted });
         seg.expectHeredocDelim = false;
       } else if (seg.expectHerestring) {
         seg.herestring = word.value;
+        seg.herestringExpands = !!word.expands;
         seg.expectHerestring = false;
       } else seg.words.push(word);
     }
@@ -119,6 +121,7 @@ function tokenize(input, shell) {
         lines.push(line);
       }
       h.seg.heredoc = lines.join("\n");
+      h.seg.heredocExpands = !h.literal && /\$[A-Za-z_{(]|`/.test(h.seg.heredoc);
     }
   }
 
@@ -167,6 +170,9 @@ function tokenize(input, shell) {
       i += 1;
       while (i < s.length && s[i] !== '"') {
         if (s[i] === escape && i + 1 < s.length) {
+          // In POSIX double quotes a backslash only escapes $ ` " \ and newline;
+          // before anything else it stays literal (psql -c "\dt").
+          if (escape === "\\" && !'$`"\\\n'.includes(s[i + 1])) word.value += "\\";
           word.value += s[i + 1];
           i += 2;
           continue;
@@ -175,6 +181,7 @@ function tokenize(input, shell) {
           const r = readBalanced(s, i + 2, "(", ")");
           subs.push(r.body);
           word.value += s.slice(i, r.end);
+          word.expands = true;
           i = r.end;
           continue;
         }
@@ -183,9 +190,11 @@ function tokenize(input, shell) {
           const stop = end === -1 ? s.length : end;
           subs.push(s.slice(i + 1, stop));
           word.value += s.slice(i, stop + 1);
+          word.expands = true;
           i = stop + 1;
           continue;
         }
+        if (s[i] === "$" && /[A-Za-z_{]/.test(s[i + 1] || "")) word.expands = true;
         word.value += s[i];
         i += 1;
       }
@@ -196,6 +205,7 @@ function tokenize(input, shell) {
       const r = readBalanced(s, i + 2, "(", ")");
       subs.push(r.body);
       addChar(s.slice(i, r.end), false);
+      word.expands = true;
       i = r.end;
       continue;
     }
@@ -204,7 +214,15 @@ function tokenize(input, shell) {
       const stop = end === -1 ? s.length : end;
       subs.push(s.slice(i + 1, stop));
       addChar(s.slice(i, stop + 1), false);
+      word.expands = true;
       i = stop + 1;
+      continue;
+    }
+    if (c === "$" && /[A-Za-z_{]/.test(next || "")) {
+      // $var / ${var}: the value is unknown to the guard
+      addChar(c, false);
+      word.expands = true;
+      i += 1;
       continue;
     }
     if (c === "<" && next === "(" && !ps) {
@@ -772,33 +790,475 @@ function classifyScriptName(runner, name) {
 
 // ---------------------------------------------------------------------------
 // SQL
+//
+// Policy (tool-rules.md -> Always Ask First, <shared>/sql-safety.md): ask for any
+// statement that is not provably a plain read. A WHERE clause never makes a write
+// safe: "DELETE ... WHERE 1=1" deletes every row, and even a narrow write changes
+// data the user may not want changed. Plain reads are allowed: SELECT / WITH /
+// VALUES / TABLE / SHOW / DESCRIBE / plain EXPLAIN, read-only psql meta-commands,
+// sqlite read-only dot-commands, MongoDB finds and aggregations without $out or
+// $merge, and Redis read commands. Anything unknown asks.
+//
+// The text is lexed once per dialect the client may speak (comment syntax, string
+// escapes, identifier quotes and client meta-commands differ between servers and
+// server settings), and the guard asks if ANY reading finds something that is not
+// a plain read. A trick that hides a write from one lexer (a quote inside a
+// comment, a backslash before a quote, a MySQL "#" or "/*! */" comment, a nested
+// PostgreSQL comment) is still seen by the lexer that matches the server.
+//
+// Known limits, by design:
+// - SELECT f(x) with a user-defined or extension function is allowed: the guard
+//   cannot know whether f writes. Known side-effect functions ask (SIDE_EFFECT_NAMES).
+//   Asking for every unknown function would make everyday reads noisy.
+// - A search_path set through PGOPTIONS or a role default can make a built-in
+//   name resolve to a user function; same limit.
+// - Client option files (~/.psqlrc, ~/.my.cnf init-command) are not read.
+// - mongosh runs JavaScript: the guard asks for known write methods, computed
+//   method calls, load/require/eval and $out/$merge, but cannot prove a script is
+//   read-only.
 
-function stripSql(text) {
-  return String(text)
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .replace(/--[^\n]*/g, " ")
-    .replace(/'(?:[^']|'')*'/g, "''")
-    .replace(/\$\$[\s\S]*?\$\$/g, "''");
+const SIDE_EFFECT_NAMES = [
+  "NEXTVAL", "SETVAL", "SET_CONFIG", "PG_TERMINATE_BACKEND", "PG_CANCEL_BACKEND", "PG_RELOAD_CONF",
+  "PG_ROTATE_LOGFILE", "PG_DROP_[A-Z_]+", "PG_CREATE_[A-Z_]+", "PG_COPY_[A-Z_]+", "PG_(?:TRY_)?ADVISORY_[A-Z_]*",
+  "PG_REPLICATION_[A-Z_]+", "PG_LOGICAL_[A-Z_]+", "PG_STAT_RESET[A-Z_]*", "PG_(?:SET|CLEAR|RESTORE)_[A-Z_]+",
+  "PG_NOTIFY", "PG_BACKUP_[A-Z_]+", "PG_(?:START|STOP)_BACKUP", "PG_WAL_REPLAY_[A-Z_]+", "PG_SWITCH_(?:WAL|XLOG)",
+  "PG_PROMOTE", "PG_IMPORT_SYSTEM_COLLATIONS", "PG_EXTENSION_CONFIG_DUMP", "PG_WRITE_[A-Z_]+", "PG_FILE_[A-Z_]+",
+  "LO_[A-Z0-9_]+", "LOWRITE", "DBLINK[A-Z_]*", "QUERY_TO_XML[A-Z_]*", "CURSOR_TO_XML[A-Z_]*",
+  "SYS_EXEC", "SYS_EVAL", "SLEEP", "PG_SLEEP[A-Z_]*", "BENCHMARK", "GET_LOCK", "RELEASE_LOCK", "RELEASE_ALL_LOCKS",
+  "LOAD_FILE", "LOAD_EXTENSION", "WRITEFILE", "EDIT", "FTS3_TOKENIZER",
+  "XP_[A-Z_]+", "SP_[A-Z_]+", "OPENQUERY", "OPENROWSET", "OPENDATASOURCE",
+].join("|");
+// Functions that change state (or stall the server) even inside a SELECT.
+const SIDE_EFFECT_FUNCS = new RegExp("\\b(" + SIDE_EFFECT_NAMES + ")\\s*\\(");
+const SIDE_EFFECT_NAME = new RegExp("^(" + SIDE_EFFECT_NAMES + ")$");
+// Statements that can hide inside a read: PostgreSQL data-modifying CTEs, and
+// T-SQL batches, which need no ";" between statements ("SELECT 1 DROP TABLE t").
+// INSERT( and REPLACE( / TRUNCATE( are MySQL string and number functions.
+const IN_QUERY_WRITE = /\b(INSERT(?!\s*\()|UPDATE|DELETE|MERGE|UPSERT|REPLACE\s+INTO|TRUNCATE\s+TABLE|DROP|ALTER|CREATE|GRANT|REVOKE|DENY|COPY|CALL|EXEC|EXECUTE|DBCC|BULK|BACKUP\s+(?:DATABASE|LOG)|RESTORE\s+(?:DATABASE|LOG)|SHUTDOWN|KILL|RECONFIGURE|CHECKPOINT|WRITETEXT|UPDATETEXT|RECEIVE|SEND\s+ON|(?:ENABLE|DISABLE)\s+TRIGGER)\b/;
+const TX_CONTROL = /^(BEGIN|START\s+TRANSACTION|COMMIT|END|ROLLBACK|ABORT|SAVEPOINT|RELEASE)\b/;
+const READ_PRAGMA_WITH_ARG = /^(TABLE_INFO|TABLE_XINFO|TABLE_LIST|INDEX_INFO|INDEX_XINFO|INDEX_LIST|FOREIGN_KEY_LIST|FOREIGN_KEY_CHECK|INTEGRITY_CHECK|QUICK_CHECK)$/;
+const WRITE_PRAGMA = /^(OPTIMIZE|WAL_CHECKPOINT|INCREMENTAL_VACUUM|SHRINK_MEMORY)$/;
+
+// Lexer settings per dialect. backslash: "\" escapes inside '...' strings.
+const SQL_DIALECTS = {
+  pg: { nest: true, eStrings: true, dollar: true, client: "psql" },
+  pgBackslash: { nest: true, eStrings: true, dollar: true, backslash: true, client: "psql" }, // standard_conforming_strings=off
+  mysql: { hash: true, dashSpace: true, backslash: true, dqString: true, backtick: true, execComment: true, client: "mysql" },
+  mysqlNoBackslash: { hash: true, dashSpace: true, dqString: true, backtick: true, execComment: true, client: "mysql" }, // NO_BACKSLASH_ESCAPES / ANSI_QUOTES
+  sqlite: { backtick: true, brackets: true, client: "sqlite" },
+  duckdb: { nest: true, eStrings: true, dollar: true, client: "sqlite" },
+  tsql: { nest: true, brackets: true, client: "sqlcmd" },
+  chMysql: { hash: true, backslash: true, dqString: true, backtick: true, client: null },
+  chPg: { nest: true, backslash: true, backtick: true, client: null },
+};
+const CLIENT_DIALECTS = {
+  psql: ["pg", "pgBackslash"],
+  cockroach: ["pg", "pgBackslash"],
+  mysql: ["mysql", "mysqlNoBackslash"],
+  mariadb: ["mysql", "mysqlNoBackslash"],
+  sqlite3: ["sqlite"],
+  sqlite: ["sqlite"],
+  duckdb: ["duckdb"],
+  sqlcmd: ["tsql"],
+  "invoke-sqlcmd": ["tsql"],
+  "clickhouse-client": ["chMysql", "chPg"],
+};
+const DEFAULT_DIALECTS = ["pg", "pgBackslash", "mysql", "mysqlNoBackslash", "sqlite", "tsql"];
+const IDENT_CHAR = /[A-Za-z0-9_$\u0080-￿]/;
+
+// psql meta-commands that only read, format or change session display.
+const PSQL_SAFE_META = /^(d[A-Za-z]*\+*|l\+*|list\+*|x|timing|conninfo|c|connect|encoding|pset|a|t|H|C|f|T|z\+*|sf\+*|sv\+*|\?|h|help|q|quit|errverbose|echo|qecho|warn|set|unset|g|gx|gset|gdesc|watch|crosstabview|p|print|r|reset|if|elif|else|endif|getenv|bind|bind_named|parse|close|close_prepared|lo_list|startpipeline|endpipeline|syncpipeline|sendpipeline|flushrequest|flush|getresults|restrict|unrestrict|copyright|\\)$/;
+const PSQL_TERMINATOR = /^(g|gx|gset|gexec|gdesc|crosstabview|watch)$/;
+// mysql client backslash commands that do not run a shell, read a file or write one.
+const MYSQL_SAFE_META = /^[gGcqsuh?#RWwtnCpxr]$/;
+const SQLITE_SAFE_DOT = /^(tables|table|schema|fullschema|indexes|indices|headers|header|mode|help|show|databases|dbinfo|timer|width|nullvalue|separator|explain|eqp|stats|changes|echo|print|prompt|bail|quit|exit|lint|version|vfsinfo|vfslist|vfsname|limit|scanstats|crnl|binary|parameter|sha3sum|dump|columns|maxrows|maxwidth|rows|highlight|last|timeout)$/i;
+const SQLCMD_SAFE = /^:(setvar|listvar|help|list|reset|on|xml|serverlist|quit)$/i;
+
+function escapeRegExp(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function destructiveSql(text) {
-  if (!text) return null;
-  const mongo = String(text);
-  if (/\.(drop|dropDatabase|dropIndexes|dropIndex)\s*\(/i.test(mongo)) return "drops a collection, index or database";
-  if (/\.(deleteMany|remove|updateMany)\s*\(\s*(\{\s*\}\s*)?[,)]/i.test(mongo)) return "deletes or updates every document (empty filter)";
-  for (const raw of stripSql(text).split(";")) {
-    const st = raw.replace(/\s+/g, " ").trim().toUpperCase();
-    if (!st) continue;
-    const m = /^(DROP|TRUNCATE|ALTER)\b/.exec(st) || /\b(DROP|TRUNCATE)\s+(TABLE|DATABASE|SCHEMA|INDEX|VIEW|COLUMN|TYPE|SEQUENCE|FUNCTION|TRIGGER|ROLE|USER)\b/.exec(st);
-    if (m) return "runs " + m[1];
-    const hasWhere = /\bWHERE\b/.test(st);
-    if ((/^DELETE\b/.test(st) || /\bDELETE\s+FROM\b/.test(st)) && !hasWhere) return "runs DELETE without WHERE";
-    if ((/^UPDATE\s/.test(st) || /[\s(]UPDATE\s+\S+(\s+(AS\s+)?\w+)?\s+SET\b/.test(st)) && /\bSET\b/.test(st) && !hasWhere) return "runs UPDATE without WHERE";
+// Index just past a quoted token that starts at s[i]; s.length if unterminated
+// (the rest of the text then cannot run as a separate statement anyway).
+function skipQuoted(s, i, close, backslash) {
+  let j = i + 1;
+  while (j < s.length) {
+    const c = s[j];
+    if (backslash && c === "\\") {
+      j += 2;
+      continue;
+    }
+    if (c === close) {
+      if (s[j + 1] === close) {
+        j += 2;
+        continue;
+      }
+      return j + 1;
+    }
+    j += 1;
+  }
+  return s.length;
+}
+
+// Reduces SQL text to code: comments become spaces, string literals become '',
+// quoted identifiers become "x", client meta-commands are collected separately
+// (and \g-style terminators become ";"). Statements stay separated by ";".
+function lexSql(text, d, extra) {
+  const s = String(text);
+  const n = s.length;
+  let out = "";
+  const metas = [];
+  const calls = []; // quoted identifiers used as function names: "nextval"(...)
+  let vars = false; // psql :name interpolation
+  let pending = false; // code since the last ";" (sqlite dot-commands need an empty buffer)
+  let inExec = false; // inside a MySQL /*! ... */ executable comment
+  let lineStart = true;
+  let i = 0;
+
+  function identifier(name, end) {
+    out += '"x"';
+    pending = true;
+    let k = end;
+    while (k < n && /\s/.test(s[k])) k += 1;
+    if (s[k] === "(") calls.push(name);
+  }
+
+  while (i < n) {
+    const c = s[i];
+    const c1 = s[i + 1];
+    if (lineStart) {
+      lineStart = false;
+      let j = i;
+      while (j < n && (s[j] === " " || s[j] === "\t" || s[j] === "\r")) j += 1;
+      let eol = s.indexOf("\n", j);
+      if (eol === -1) eol = n;
+      const line = s.slice(j, eol);
+      if (d.client === "sqlite" && !pending && !inExec) {
+        if (line.startsWith(".")) {
+          metas.push({ client: "sqlite", name: (/^\.(\S*)/.exec(line) || ["", ""])[1], text: line.trim() });
+          out += ";";
+          i = eol;
+          continue;
+        }
+        if (line.startsWith("#")) {
+          i = eol;
+          continue;
+        }
+      }
+      if (d.client === "sqlcmd" && extra.goLine && extra.goLine.test(line)) {
+        out += ";";
+        pending = false;
+        i = eol;
+        continue;
+      }
+    }
+    if (c === "\n") {
+      out += "\n";
+      lineStart = true;
+      i += 1;
+      continue;
+    }
+    // comments
+    if (c === "-" && c1 === "-" && (!d.dashSpace || i + 2 >= n || /[\s\x00-\x1f]/.test(s[i + 2]))) {
+      while (i < n && s[i] !== "\n") i += 1;
+      out += " ";
+      continue;
+    }
+    if (c === "#" && d.hash) {
+      while (i < n && s[i] !== "\n") i += 1;
+      out += " ";
+      continue;
+    }
+    if (c === "/" && c1 === "*") {
+      if (d.execComment && !inExec && (s[i + 2] === "!" || (s[i + 2] === "M" && s[i + 3] === "!"))) {
+        // MySQL/MariaDB run the body of /*! ... */ and /*M! ... */ as SQL.
+        i += s[i + 2] === "!" ? 3 : 4;
+        while (i < n && /[0-9]/.test(s[i])) i += 1;
+        inExec = true;
+        out += " ";
+        continue;
+      }
+      let depth = 1;
+      i += 2;
+      while (i < n && depth > 0) {
+        if (s[i] === "*" && s[i + 1] === "/") {
+          depth -= 1;
+          i += 2;
+        } else if (d.nest && s[i] === "/" && s[i + 1] === "*") {
+          depth += 1;
+          i += 2;
+        } else i += 1;
+      }
+      out += " ";
+      continue;
+    }
+    if (inExec && c === "*" && c1 === "/") {
+      inExec = false;
+      i += 2;
+      out += " ";
+      continue;
+    }
+    // string literals and quoted identifiers
+    if (c === "'") {
+      const p = s[i - 1];
+      const eString = d.eStrings && (p === "e" || p === "E") && !(i > 1 && IDENT_CHAR.test(s[i - 2]));
+      i = skipQuoted(s, i, "'", d.backslash || eString);
+      out += "''";
+      pending = true;
+      continue;
+    }
+    if (c === '"') {
+      if (d.dqString) {
+        i = skipQuoted(s, i, '"', d.backslash);
+        out += "''";
+        pending = true;
+        continue;
+      }
+      const end = skipQuoted(s, i, '"', false);
+      identifier(s.slice(i + 1, end - 1), end);
+      i = end;
+      continue;
+    }
+    if (c === "`" && d.backtick) {
+      const end = skipQuoted(s, i, "`", false);
+      identifier(s.slice(i + 1, end - 1), end);
+      i = end;
+      continue;
+    }
+    if (c === "[" && d.brackets) {
+      const end = skipQuoted(s, i, "]", false);
+      identifier(s.slice(i + 1, end - 1), end);
+      i = end;
+      continue;
+    }
+    if (c === "$" && d.dollar && !(i > 0 && IDENT_CHAR.test(s[i - 1]))) {
+      const m = /^\$([A-Za-z_\u0080-￿][A-Za-z0-9_\u0080-￿]*)?\$/.exec(s.slice(i, i + 200));
+      if (m) {
+        const close = s.indexOf(m[0], i + m[0].length);
+        i = close === -1 ? n : close + m[0].length;
+        out += "''";
+        pending = true;
+        continue;
+      }
+    }
+    // client meta-commands
+    if (c === "\\" && d.client === "mysql") {
+      const name = c1 || "";
+      metas.push({ client: "mysql", name, text: "\\" + name });
+      const term = name === "g" || name === "G";
+      out += term ? ";" : " ";
+      if (term) pending = false;
+      i += 2;
+      continue;
+    }
+    if (c === "\\" && d.client === "psql") {
+      // A meta-command runs to the end of the line or to the next backslash.
+      const rest = s.slice(i + 1, i + 80);
+      const name = (/^[A-Za-z][A-Za-z0-9_]*\+*/.exec(rest) || /^[^\n]?/.exec(rest))[0];
+      const k = i + 1 + name.length;
+      let eol = s.indexOf("\n", k);
+      if (eol === -1) eol = n;
+      let argsEnd = s.indexOf("\\", k);
+      if (argsEnd === -1 || argsEnd > eol) argsEnd = eol;
+      metas.push({ client: "psql", name, args: s.slice(k, argsEnd).trim(), text: "\\" + name });
+      const term = PSQL_TERMINATOR.test(name);
+      out += term ? ";" : " ";
+      if (term) pending = false;
+      i = argsEnd;
+      continue;
+    }
+    if (c === ":" && d.client === "psql" && s[i - 1] !== ":" && c1 !== undefined && /[A-Za-z_'"{]/.test(c1)) vars = true;
+    out += c;
+    if (c === ";") pending = false;
+    else if (!/\s/.test(c)) pending = true;
+    i += 1;
+  }
+  return { code: out, metas, calls, vars };
+}
+
+function metaReason(m) {
+  if (m.client === "psql") {
+    if (!PSQL_SAFE_META.test(m.name)) return "runs the psql meta-command " + m.text + ", which can read or write files, run a shell or execute generated SQL";
+    if ((m.name === "g" || m.name === "gx") && m.args) return "runs " + m.text + " with an argument, which writes the result to a file or a shell command";
+    if (m.args && m.args.includes("`")) return "runs " + m.text + " with a backtick argument, which psql runs as a shell command";
+    return null;
+  }
+  if (m.client === "mysql") {
+    if (!MYSQL_SAFE_META.test(m.name)) return "runs the mysql client command " + m.text + ", which can run a shell, read a file, write a file or change the delimiter";
+    return null;
+  }
+  if (m.client === "sqlite") {
+    if (!SQLITE_SAFE_DOT.test(m.name)) return "runs the dot-command ." + m.name + ", which can read or write files, run a shell or change the database";
+    return null;
   }
   return null;
 }
 
-const SQL_CLIENTS = new Set(["psql", "mysql", "mariadb", "sqlite3", "sqlite", "mongosh", "mongo", "sqlcmd", "cockroach", "clickhouse-client", "duckdb", "invoke-sqlcmd", "redis-cli", "dropdb", "mysqladmin", "pg_restore"]);
+// Why one normalized (upper-case, single-spaced) statement is not a plain read, or null.
+function statementReason(st) {
+  const fn = SIDE_EFFECT_FUNCS.exec(st);
+  if (fn) return "calls " + fn[1] + "(), which has side effects";
+  if (/\bNEXT\s+VALUE\s+FOR\b/.test(st)) return "runs NEXT VALUE FOR, which advances a sequence";
+  const body = st.replace(/^(\(\s*)+/, "");
+  const scan = (text) => {
+    const w = IN_QUERY_WRITE.exec(text.replace(/\bFOR\s+(NO\s+KEY\s+)?UPDATE\b/g, " "));
+    return w ? "runs " + w[1] + " inside the statement (any statement that is not a plain read asks first, with or without WHERE)" : null;
+  };
+  if (TX_CONTROL.test(body)) {
+    if (/\bPREPARED\b/.test(body)) return "runs " + body.split(" ")[0] + " PREPARED, which finishes a two-phase transaction";
+    return scan(body);
+  }
+  // EXPLAIN ANALYZE (and MySQL DESCRIBE ANALYZE) executes the statement; plain EXPLAIN does not.
+  const ex = /^(EXPLAIN|DESCRIBE|DESC)\b(\s*\([^)]*\))?((\s+(ANALYZE|ANALYSE|VERBOSE|COSTS|BUFFERS|EXTENDED|PARTITIONS|QUERY PLAN|FORMAT\s*=?\s*\w+))*)\s*/.exec(body);
+  if (ex) {
+    const inner = body.slice(ex[0].length).replace(/^(\(\s*)+/, "");
+    const options = (ex[2] || "") + (ex[3] || "");
+    const isStatement = /^(SELECT|WITH|VALUES|TABLE|INSERT|UPDATE|DELETE|MERGE|REPLACE|UPSERT|EXECUTE|DECLARE|CREATE)\b/.test(inner);
+    if (ex[1] !== "EXPLAIN" && !options && !isStatement) return scan(body); // DESCRIBE <table>
+    if (!inner) return null;
+    if (/\bANALY[SZ]E\b(?!\s+(FALSE|OFF|0)\b)/.test(options)) {
+      const why = statementReason(inner);
+      return why ? "runs EXPLAIN ANALYZE, which executes the statement: " + why : null;
+    }
+    return isStatement ? null : "runs EXPLAIN on an unrecognized statement";
+  }
+  if (/^(SELECT|WITH|VALUES|TABLE)\b/.test(body)) {
+    const w = scan(body);
+    if (w) return w;
+    if (/\bINTO\s+(?![@:])\S/.test(body)) return "runs SELECT ... INTO, which creates a table or writes a file";
+    return null;
+  }
+  if (/^SHOW\b/.test(body)) return scan(body.replace(/^SHOW\s+(FULL\s+)?CREATE\b/, "SHOW"));
+  if (/^PRAGMA\b/.test(body)) {
+    // "PRAGMA table_info(users)" and "PRAGMA foreign_keys" read; "PRAGMA x = y" and "PRAGMA user_version(5)" write.
+    const p = /^PRAGMA\s+(?:\w+\.)?(\w+)\s*(=|\()?/.exec(body);
+    if (!p || p[2] === "=" || (p[2] === "(" && !READ_PRAGMA_WITH_ARG.test(p[1])) || WRITE_PRAGMA.test(p[1])) return "runs a PRAGMA that changes the database or a setting";
+    return scan(body);
+  }
+  if (/^SET\b/.test(body)) {
+    // Session-level SET is harmless; GLOBAL/PERSIST change the server, PASSWORD/DEFAULT ROLE an account.
+    if (/\b(GLOBAL|PERSIST|PERSIST_ONLY|PASSWORD|DEFAULT\s+ROLE)\b/.test(body)) return "runs SET GLOBAL, PERSIST, PASSWORD or DEFAULT ROLE, which changes the server or an account";
+    return scan(body);
+  }
+  if (/^USE\s+\S+$/.test(body)) return null;
+  if (/^DECLARE\b/.test(body)) return scan(body);
+  const first = (/^[A-Z_]+(\s+[A-Z_]+)?/.exec(body) || ["an unrecognized statement"])[0];
+  return "runs " + first + " (any statement that is not a plain read asks first, with or without WHERE)";
+}
+
+function dialectReason(text, d, extra) {
+  const lx = lexSql(text, d, extra);
+  for (const m of lx.metas) {
+    const why = metaReason(m);
+    if (why) return why;
+  }
+  if (lx.vars) return "uses a psql variable (:name) whose value was not checked";
+  for (const name of lx.calls) {
+    if (SIDE_EFFECT_NAME.test(name.toUpperCase()) || name.includes("\\")) return "calls " + name + "(), which has side effects";
+  }
+  for (const part of lx.code.split(";")) {
+    const st = part.replace(/\s+/g, " ").trim().toUpperCase();
+    if (!st) continue;
+    const why = statementReason(st);
+    if (why) return why;
+  }
+  return null;
+}
+
+// Returns why a SQL text is not provably read-only, or null if every statement is.
+// opts.client picks the dialects to lex with (psql, mysql, sqlite3, sqlcmd, ...);
+// without it every dialect is tried. opts.mongo checks MongoDB shell JavaScript.
+function sqlWriteReason(text, opts) {
+  if (!text) return null;
+  const o = opts || {};
+  const raw = String(text);
+  if (o.mongo) return mongoWriteReason(raw);
+  if (!o.client) {
+    const mongo = mongoWriteReason(raw);
+    if (mongo) return mongo;
+  }
+  const names = CLIENT_DIALECTS[o.client] || DEFAULT_DIALECTS;
+  const extra = {};
+  let texts = [raw];
+  if (names.includes("tsql")) {
+    // sqlcmd: ":r file", ":out", "!! cmd" and $(var) work anywhere, even inside a string.
+    for (const line of raw.split(/\r?\n/)) {
+      const t = line.trim();
+      const m = /^(!!|:!!|:[A-Za-z]+)/.exec(t);
+      if (m && !SQLCMD_SAFE.test(m[1])) return "runs the sqlcmd command " + m[1] + ", which can read a file, write a file or run a shell";
+    }
+    if (raw.includes("$(")) return "uses a sqlcmd variable $(name) whose value was not checked";
+    extra.goLine = new RegExp("^\\s*" + escapeRegExp(o.batchSeparator || "GO") + "(\\s+\\d+)?\\s*$", "i");
+    // Batches split at GO lines, whether or not the GO sits inside a string.
+    texts = texts.concat(raw.split(/\r?\n/).reduce((acc, line) => {
+      if (extra.goLine.test(line)) acc.push("");
+      else acc[acc.length - 1] += line + "\n";
+      return acc;
+    }, [""]));
+  }
+  for (const name of names) {
+    for (const t of texts) {
+      const why = dialectReason(t, SQL_DIALECTS[name], extra);
+      if (why) return why;
+    }
+  }
+  return null;
+}
+
+const MONGO_WRITE = /\.\s*(insert|insertOne|insertMany|update|updateOne|updateMany|replaceOne|delete|deleteOne|deleteMany|remove|findOneAndUpdate|findOneAndReplace|findOneAndDelete|findAndModify|bulkWrite|mapReduce|drop|dropDatabase|dropIndex|dropIndexes|createIndex|createIndexes|createCollection|createView|renameCollection|runCommand|adminCommand|shutdownServer|createUser|dropUser|dropAllUsers|updateUser|changeUserPassword|createRole|dropRole|dropAllRoles|updateRole|grantRolesToUser|revokeRolesFromUser|grantRolesToRole|revokeRolesFromRole|grantPrivilegesToRole|revokePrivilegesFromRole|createSearchIndex|createSearchIndexes|dropSearchIndex|updateSearchIndex|hideIndex|unhideIndex|killOp|setProfilingLevel|setLogLevel|fsyncLock|fsyncUnlock|convertToCapped|compact|cloneCollection|copyDatabase|initializeOrderedBulkOp|initializeUnorderedBulkOp|save|eval)\b/i;
+
+function mongoWriteReason(text) {
+  const m = MONGO_WRITE.exec(text);
+  if (m) return "runs the MongoDB write or admin method " + m[1] + "()";
+  if (/["'`]?\$(out|merge)["'`]?\s*:/.test(text)) return "runs an aggregation with $out or $merge, which writes a collection";
+  if (/\]\s*\(/.test(text) || /[\w$)\]]\s*\[\s*(?![\d'"\]])/.test(text) || /\[\s*['"`][^\]]*\+/.test(text)) {
+    return "calls a method through a computed property, which the guard cannot check";
+  }
+  const js = /\b(load|require|eval|Function|import|constructor)\s*\(|\bprocess\s*\.\s*(?!env\b)\w|\bconstructor\b/.exec(text);
+  if (js) return "runs " + js[0].trim() + ", which can load code, run a shell or hide a write";
+  const rs = /\b(rs|sh)\.(\w+)\s*\(/.exec(text);
+  if (rs && !/^(status|conf|config|printReplicationInfo|printSecondaryReplicationInfo|isMaster|hello|help|getBalancerState|isBalancerRunning)$/.test(rs[2])) {
+    return "runs the replica set or sharding command " + rs[1] + "." + rs[2] + "()";
+  }
+  return null;
+}
+
+const REDIS_READ = new Set(["get", "mget", "exists", "type", "ttl", "pttl", "expiretime", "pexpiretime", "strlen", "getrange", "substr", "lcs", "keys", "scan", "sscan", "hscan", "zscan", "randomkey", "hget", "hmget", "hgetall", "hkeys", "hvals", "hlen", "hexists", "hstrlen", "hrandfield", "lrange", "llen", "lindex", "lpos", "smembers", "sismember", "smismember", "scard", "srandmember", "sinter", "sintercard", "sunion", "sdiff", "zrange", "zrangebyscore", "zrevrange", "zrevrangebyscore", "zrangebylex", "zrevrangebylex", "zscore", "zmscore", "zrank", "zrevrank", "zcard", "zcount", "zlexcount", "zrandmember", "zinter", "zunion", "zdiff", "zintercard", "xrange", "xrevrange", "xlen", "xinfo", "xpending", "xread", "info", "ping", "echo", "dbsize", "time", "lastsave", "role", "memory", "object", "slowlog", "latency", "client", "config", "command", "pubsub", "dump", "bitcount", "bitpos", "getbit", "bitfield_ro", "sort_ro", "pfcount", "geopos", "geodist", "geohash", "georadius_ro", "georadiusbymember_ro", "geosearch", "json.get", "json.mget", "json.type", "json.strlen", "json.arrlen", "json.objkeys", "json.objlen", "ft.search", "ft.info", "ft._list", "ft.aggregate", "ft.explain", "ft.profile", "select", "auth", "hello", "readonly", "lolwut"]);
+const REDIS_WRITE_SUB = {
+  client: /^(kill|pause|unpause|no-evict|no-touch|setname|setinfo|reply|tracking|caching|unblock)$/i,
+  config: /^(set|rewrite|resetstat)$/i,
+  memory: /^(purge)$/i,
+  slowlog: /^(reset)$/i,
+  latency: /^(reset)$/i,
+};
+// redis-cli options that take a value (the value is not the command).
+const REDIS_VALUED = new Set(["-h", "-p", "-a", "-n", "-u", "-s", "-r", "-i", "-d", "-D", "-t", "--user", "--pass", "--tls-cert", "--tls-key", "--tls-ciphers", "--tls-ciphersuites", "--cacert", "--cacertdir", "--cert", "--key", "--sni", "--rdb", "--functions-rdb", "--pattern", "--quoted-pattern", "--count", "--eval", "--memkeys-samples", "--keystats-samples", "--lru-test", "--intrinsic-latency", "--cluster-replicas", "--top"]);
+
+function redisWriteReason(args) {
+  let i = 0;
+  for (; i < args.length; i += 1) {
+    const a = args[i];
+    if (/^--(eval|pipe|rdb|functions-rdb|replica|slave)$/i.test(a)) return "redis-cli " + a + " runs a script, a bulk import or a replication stream";
+    if (REDIS_VALUED.has(a)) {
+      i += 1;
+      continue;
+    }
+    if (a.startsWith("-")) continue;
+    break;
+  }
+  if (i >= args.length) return null;
+  const cmd = args[i].toLowerCase();
+  const sub = (args[i + 1] || "").toLowerCase();
+  if (!REDIS_READ.has(cmd)) return "runs the Redis command " + args[i].toUpperCase() + ", which is not a plain read";
+  const subRule = REDIS_WRITE_SUB[cmd];
+  if (subRule && subRule.test(sub)) return "runs Redis " + cmd.toUpperCase() + " " + sub.toUpperCase();
+  return null;
+}
+
+const SQL_CLIENTS = new Set(["psql", "mysql", "mariadb", "sqlite3", "sqlite", "mongosh", "mongo", "sqlcmd", "cockroach", "clickhouse", "clickhouse-client", "clickhouse-local", "duckdb", "invoke-sqlcmd", "redis-cli", "dropdb", "createdb", "createuser", "dropuser", "vacuumdb", "reindexdb", "clusterdb", "pgbench", "mysqladmin", "mysqlimport", "mongoimport", "mongorestore", "pg_restore"]);
+// Tools whose job is to change a database; they ask unless only asked for help or a version.
+const DB_WRITE_TOOLS = new Set(["createdb", "createuser", "dropuser", "vacuumdb", "reindexdb", "clusterdb", "mysqlimport", "mongoimport", "mongorestore"]);
+const MYSQLADMIN_READ = new Set(["status", "extended-status", "variables", "processlist", "ping", "version"]);
 
 function flagValues(args, names, attachedPrefixes) {
   const values = [];
@@ -816,87 +1276,250 @@ function flagValues(args, names, attachedPrefixes) {
   return values;
 }
 
-function classifySqlClient(cmd, args, seg, prevSeg) {
+// Parses getopt-style options, including short bundles such as psql -tAc "SQL"
+// and mysql -Ne "SQL". valued: short letters that take a value (attached or the
+// next word); optional: letters whose value can only be attached (mysql -pSECRET);
+// long: long options that take the next word as their value.
+function parseOpts(args, spec) {
+  const opts = [];
+  const pos = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i];
+    if (a === "--") {
+      pos.push(...args.slice(i + 1));
+      break;
+    }
+    if (a.startsWith("--")) {
+      const eq = a.indexOf("=");
+      let name = (eq === -1 ? a : a.slice(0, eq)).toLowerCase();
+      // getopt_long and the MySQL clients accept an abbreviated long option (--exec=...).
+      if (!spec.long.has(name) && name.length >= 4) name = [...spec.long].find((l) => l.startsWith(name)) || name;
+      if (eq !== -1) opts.push({ name, value: a.slice(eq + 1) });
+      else if (spec.long.has(name) && i + 1 < args.length) {
+        opts.push({ name, value: args[i + 1] });
+        i += 1;
+      } else opts.push({ name, value: null });
+      continue;
+    }
+    if (a.length > 1 && a[0] === "-") {
+      for (let j = 1; j < a.length; j += 1) {
+        const letter = a[j];
+        if (spec.optional && spec.optional.has(letter)) {
+          opts.push({ name: "-" + letter, value: a.slice(j + 1) });
+          break;
+        }
+        if (spec.valued.has(letter)) {
+          let value = a.slice(j + 1);
+          if (!value && i + 1 < args.length) {
+            value = args[i + 1];
+            i += 1;
+          }
+          opts.push({ name: "-" + letter, value });
+          break;
+        }
+        opts.push({ name: "-" + letter, value: null });
+      }
+      continue;
+    }
+    pos.push(a);
+  }
+  return { opts, pos };
+}
+
+function optValues(parsed, names) {
+  return parsed.opts.filter((o) => names.includes(o.name) && o.value !== null).map((o) => o.value);
+}
+
+const PSQL_OPTS = { valued: new Set("cdfhLopPRTUvF".split("")), long: new Set(["--command", "--dbname", "--file", "--host", "--log-file", "--output", "--port", "--pset", "--record-separator", "--set", "--table-attr", "--username", "--variable", "--field-separator"]) };
+const MYSQL_OPTS = { valued: new Set("DehPSu".split("")), optional: new Set(["p"]), long: new Set(["--execute", "--init-command", "--init_command", "--user", "--host", "--port", "--socket", "--database", "--default-character-set", "--protocol"]) };
+const SQLITE_VALUED = new Set(["-cmd", "-c", "-s", "-f", "-separator", "-nullvalue", "-newline", "-init", "-vfs", "-maxsize", "-mmap", "-escape"]);
+const SQLITE_VALUED2 = new Set(["-pagecache", "-lookaside"]);
+const SQLCMD_VALUED = new Set("SUPdHltshwafoKMyYmVzZ".split(""));
+const INVOKE_SQLCMD_VALUED = ["serverinstance", "database", "username", "password", "credential", "accesstoken", "querytimeout", "connectiontimeout", "errorlevel", "severitylevel", "maxcharlength", "maxbinarylength", "variable", "outputas", "connectionstring", "hostname", "newpassword", "applicationname", "applicationintent", "encrypt", "hostnameincertificate", "failoverpartner", "statisticsvariable", "keyvaultaccesstoken", "managedhsmaccesstoken", "erroraction", "warningaction", "informationaction", "errorvariable", "warningvariable", "informationvariable", "outvariable", "outbuffer", "pipelinevariable"];
+
+// Where a command reads stdin from: "<" files, a heredoc, a here-string or a pipe.
+function stdinOf(seg, prevSeg) {
+  const redirs = (seg.redirs || []).filter((r) => r.op === "<" && r.target);
+  const piped = seg.sep === "|" && prevSeg ? prevSeg : null;
+  const heredoc = seg.heredoc === undefined ? null : seg.heredoc;
+  const herestring = seg.herestring === undefined ? null : seg.herestring;
+  if (!redirs.length && heredoc === null && herestring === null && !piped) return null;
+  return { redirs, heredoc, heredocExpands: !!seg.heredocExpands, herestring, herestringExpands: !!seg.herestringExpands, piped };
+}
+
+function helpOnly(args) {
+  return args.length > 0 && args.every((a) => /^(--help|-\?|--version|-V)$/.test(a));
+}
+
+function classifySqlClient(cmd, args, seg, input) {
+  const stdin = input || { redirs: [], heredoc: null, herestring: null, piped: null };
+  const db = (why) => ask("database-write", why);
   if (cmd === "redis-cli") {
-    if (args.some((a) => /^(flushall|flushdb)$/i.test(a))) return ask("destructive-sql", "redis-cli FLUSHALL/FLUSHDB deletes all keys");
+    const why = redisWriteReason(args);
+    if (why) return db("redis-cli " + why);
+    if (stdin.piped || stdin.heredoc !== null || stdin.herestring !== null) return db("redis-cli reads commands from stdin; they were not checked");
+    if (stdin.redirs.length) return db("redis-cli reads commands from a file; they were not checked");
     return null;
   }
-  if (cmd === "dropdb") return ask("destructive-sql", "dropdb drops a database");
+  if (cmd === "dropdb") return db("dropdb drops a database");
+  if (DB_WRITE_TOOLS.has(cmd)) return helpOnly(args) ? null : db(cmd + " changes a database (creates, drops, imports, restores or rewrites data)");
+  if (cmd === "pgbench") {
+    if (helpOnly(args)) return null;
+    const selectOnly = args.some((a) => /^(-S|--select-only|--builtin=select-only)$/.test(a)) || /(^|\s)-b select-only(\s|$)/.test(args.join(" "));
+    if (selectOnly && !args.some((a) => /^(-i|--initialize|-i\w+)$/.test(a))) return null;
+    return db("pgbench initializes tables or runs a write workload");
+  }
   if (cmd === "mysqladmin") {
-    if (args.some((a) => /^drop$/i.test(a))) return ask("destructive-sql", "mysqladmin drop drops a database");
+    const p = parseOpts(args, { valued: new Set("uhPSci".split("")), optional: new Set(["p"]), long: new Set(["--user", "--host", "--port", "--socket", "--count", "--sleep"]) });
+    const writes = p.pos.filter((a) => !MYSQLADMIN_READ.has(a.toLowerCase()));
+    if (writes.length) return db("mysqladmin " + writes[0] + " is not a read-only admin command");
     return null;
   }
   if (cmd === "pg_restore") {
-    if (args.some((a) => /^(-c|--clean)$/.test(a))) return ask("destructive-sql", "pg_restore --clean drops existing objects before restoring");
+    if (args.some((a) => /^(-c|--clean)$/.test(a))) return db("pg_restore --clean drops existing objects before restoring");
+    if (args.some((a) => /^(-d.*|--dbname(=.*)?)$/.test(a))) return db("pg_restore -d restores into a database, which writes to it");
     return null;
   }
-  if (cmd === "cockroach" &&(args[0] || "").toLowerCase() !== "sql") return null;
-  let sql = [];
+  if (cmd === "cockroach") {
+    if ((args[0] || "").toLowerCase() !== "sql") return null;
+    args = args.slice(1);
+  }
+  if (cmd === "clickhouse") {
+    if (!/^(client|local)$/i.test(args[0] || "")) return null;
+    args = args.slice(1);
+    cmd = "clickhouse-client";
+  }
+  if (cmd === "clickhouse-local") cmd = "clickhouse-client";
+
+  const sql = []; // { text, fromArg } or { text, expands }
   let files = [];
+  const opts = { client: cmd };
+  const fromArgs = (values) => values.forEach((text) => sql.push({ text, fromArg: true }));
   switch (cmd) {
-    case "psql":
-      sql = flagValues(args, ["-c", "--command"], ["-c"]);
-      files = flagValues(args, ["-f", "--file"], ["-f"]);
+    case "psql": {
+      const p = parseOpts(args, PSQL_OPTS);
+      fromArgs(optValues(p, ["-c", "--command"]));
+      files = optValues(p, ["-f", "--file"]);
       break;
+    }
     case "mysql":
-    case "mariadb":
-      sql = flagValues(args, ["-e", "--execute"], ["-e"]);
+    case "mariadb": {
+      const p = parseOpts(args, MYSQL_OPTS);
+      fromArgs(optValues(p, ["-e", "--execute", "--init-command", "--init_command"]));
       break;
+    }
     case "cockroach":
-      sql = flagValues(args, ["-e", "--execute"]);
+      fromArgs(flagValues(args, ["-e", "--execute"]));
       files = flagValues(args, ["-f", "--file"]);
       break;
-    case "clickhouse-client":
-      sql = flagValues(args, ["-q", "--query"]);
-      files = flagValues(args, ["--queries-file"]);
+    case "clickhouse-client": {
+      const p = parseOpts(args, { valued: new Set("qdhu".split("")), long: new Set(["--query", "--queries-file", "--database", "--host", "--user", "--password", "--port", "--format", "--config-file"]) });
+      fromArgs(optValues(p, ["-q", "--query"]));
+      files = optValues(p, ["--queries-file"]);
       break;
+    }
     case "sqlite3":
     case "sqlite":
     case "duckdb": {
-      sql = flagValues(args, ["-cmd", "-c"]);
-      const valued = new Set(["-cmd", "-c", "-separator", "-nullvalue", "-newline", "-init"]);
-      files = flagValues(args, ["-init"]);
+      if (args.some((a) => /^(-A|--archive)/.test(a))) return db(cmd + " -A runs an archive command, which writes files or the database");
       const pos = [];
       for (let i = 0; i < args.length; i += 1) {
-        if (args[i].startsWith("-")) {
-          if (valued.has(args[i].toLowerCase())) i += 1;
+        const a = args[i];
+        const flag = a.replace(/^--/, "-").toLowerCase();
+        if (a.startsWith("-") && a.length > 1) {
+          if (flag === "-cmd" || flag === "-c" || (cmd === "duckdb" && flag === "-s")) {
+            if (i + 1 < args.length) sql.push({ text: args[i + 1], fromArg: true });
+            i += 1;
+          } else if (flag === "-init" || (cmd === "duckdb" && flag === "-f")) {
+            if (i + 1 < args.length) files.push(args[i + 1]);
+            i += 1;
+          } else if (SQLITE_VALUED.has(flag)) i += 1;
+          else if (SQLITE_VALUED2.has(flag)) i += 2;
           continue;
         }
-        pos.push(args[i]);
+        pos.push(a);
       }
-      if (pos.length > 1) sql.push(pos.slice(1).join(" "));
+      // Every argument after the database file is run separately (SQL or a dot-command).
+      fromArgs(pos.slice(1));
       break;
     }
     case "mongosh":
-    case "mongo": {
-      sql = flagValues(args, ["--eval"]);
-      files = flagValues(args, ["-f", "--file"]).concat(nonFlags(args).filter((a) => /\.js$/i.test(a)));
+    case "mongo":
+      opts.mongo = true;
+      fromArgs(flagValues(args, ["--eval"]));
+      files = flagValues(args, ["-f", "--file"]).concat(nonFlags(args).filter((a) => /\.(js|mjs|cjs)$/i.test(a)));
+      break;
+    case "sqlcmd":
+      // sqlcmd options are case-sensitive (-Q runs a query, -q too, -I is a switch) and also take "/".
+      for (let i = 0; i < args.length; i += 1) {
+        const m = /^[-/]([A-Za-z])(.*)$/.exec(args[i]);
+        if (!m) continue;
+        const [, letter, rest] = m;
+        const value = () => (rest ? rest : (i += 1, args[i]));
+        if (letter === "Q" || letter === "q") {
+          const v = value();
+          if (v !== undefined) sql.push({ text: v, fromArg: true });
+        } else if (letter === "i") {
+          const v = value();
+          if (v !== undefined) files.push(v);
+          while (i + 1 < args.length && !/^[-/]/.test(args[i + 1])) files.push(args[++i]);
+        } else if (letter === "c") opts.batchSeparator = value();
+        else if (letter === "v") {
+          if (!rest) i += 1;
+          while (i + 1 < args.length && args[i + 1].includes("=") && !/^[-/]/.test(args[i + 1])) i += 1;
+        } else if (SQLCMD_VALUED.has(letter) && !rest) i += 1;
+      }
+      break;
+    case "invoke-sqlcmd": {
+      // PowerShell: -Query is also the first positional parameter, names can be
+      // shortened to a unique prefix, and "-Query:value" is valid.
+      let positional = false;
+      for (let i = 0; i < args.length; i += 1) {
+        const m = /^-([A-Za-z]+)(?::([\s\S]*))?$/.exec(args[i]);
+        if (!m) {
+          if (!positional) sql.push({ text: args[i], fromArg: true });
+          positional = true;
+          continue;
+        }
+        const name = m[1].toLowerCase();
+        const value = () => (m[2] !== undefined ? m[2] : (i += 1, args[i]));
+        if ("query".startsWith(name)) {
+          const v = value();
+          if (v !== undefined) sql.push({ text: v, fromArg: true });
+        } else if (name.length >= 3 && "inputfile".startsWith(name)) {
+          const v = value();
+          if (v !== undefined) files.push(v);
+        } else if (m[2] === undefined && INVOKE_SQLCMD_VALUED.some((p) => p.startsWith(name))) i += 1;
+      }
       break;
     }
-    case "sqlcmd":
-      sql = flagValues(args, ["-Q", "-q"]);
-      files = flagValues(args, ["-i"]);
-      break;
-    case "invoke-sqlcmd":
-      sql = flagValues(args, ["-Query"]);
-      files = flagValues(args, ["-InputFile"]);
-      break;
     default:
       return null;
   }
-  for (const r of seg.redirs) if (r.op === "<" && r.target) files.push(r.target);
-  if (seg.heredoc !== null && seg.heredoc !== undefined) sql.push(seg.heredoc);
-  if (seg.herestring !== null && seg.herestring !== undefined) sql.push(seg.herestring);
-  if (seg.sep === "|" && prevSeg) {
-    const prev = unwrap(prevSeg.words.map((w) => w.value));
-    if (["cat", "type", "get-content", "gc", "zcat", "gunzip"].includes(prev.cmd)) files.push(nonFlags(prev.args)[0] || "(stdin)");
-    else sql.push(prevSeg.words.map((w) => w.value).join(" "));
+  for (const r of stdin.redirs) files.push(r.target);
+  if (stdin.heredoc !== null) sql.push({ text: stdin.heredoc, expands: stdin.heredocExpands });
+  if (stdin.herestring !== null) sql.push({ text: stdin.herestring, expands: stdin.herestringExpands });
+  if (stdin.piped) {
+    const prev = stdin.piped;
+    const words = prev.words.map((w) => w.value);
+    const prevExpands = prev.words.some((w) => w.expands);
+    const pu = unwrap(words);
+    const ps = /^@\r?\n([\s\S]*)\r?\n@$/.exec(words.length === 1 ? words[0] : "");
+    if (ps) sql.push({ text: ps[1], expands: prevExpands }); // PowerShell here-string
+    else if (prev.heredoc !== null && prev.heredoc !== undefined && !nonFlags(pu.args).length) sql.push({ text: prev.heredoc, expands: !!prev.heredocExpands });
+    else if (["cat", "type", "get-content", "gc", "zcat", "gunzip", "bzcat", "xzcat"].includes(pu.cmd)) files.push(nonFlags(pu.args)[0] || "(stdin)");
+    else if (["echo", "write-output"].includes(pu.cmd) && !pu.args.some((a) => a.includes("\\") || /^-[a-z]*e/i.test(a))) {
+      sql.push({ text: pu.args.filter((a) => !/^-[nE]+$/.test(a)).join(" "), expands: prevExpands });
+    } else sql.push({ text: words.join(" "), expands: prevExpands });
   }
-  for (const text of sql) {
-    const why = destructiveSql(text);
-    if (why) return ask("destructive-sql", cmd + " " + why);
+  const expanding = seg.words.filter((w) => w.expands).map((w) => w.value);
+  for (const item of sql) {
+    const expands = item.fromArg ? item.text !== "" && expanding.some((w) => w.includes(item.text)) : item.expands;
+    if (expands) return db(cmd + " runs SQL built from a shell variable or command substitution; its value was not checked");
+    const why = sqlWriteReason(item.text, opts);
+    if (why) return db(cmd + " " + why);
   }
-  if (files.length) return ask("destructive-sql", cmd + " runs SQL from " + files.join(", ") + "; its contents were not checked");
+  if (files.length) return db(cmd + " runs SQL from " + files.join(", ") + "; its contents were not checked");
   return null;
 }
 
@@ -1391,12 +2014,16 @@ function classifySegment(seg, prevSeg, ctx, depth) {
   if (!u.cmd) return null;
   const shell = ctx.shell;
   const mode = ctx.mode;
+  // stdin of this command, or of the wrapper that runs it ("docker exec -i db psql < dump.sql").
+  const input = stdinOf(seg, prevSeg) || ctx.stdin || null;
 
   const nested = depth < MAX_DEPTH ? nestedCommand(u) : null;
   if (nested) {
+    const expanding = new Set(seg.words.filter((w) => w.expands).map((w) => w.value));
+    const innerCtx = Object.assign({}, ctx, { stdin: input });
     const inner = nested.argv
-      ? classifySegment({ words: nested.argv.map((v) => ({ value: v })), sep: null, redirs: [], heredoc: null, herestring: null }, null, ctx, depth + 1)
-      : classifyText(nested.text, { shell: nested.shell, mode }, depth + 1);
+      ? classifySegment({ words: nested.argv.map((v) => ({ value: v, expands: expanding.has(v) })), sep: null, redirs: [], heredoc: null, herestring: null }, null, innerCtx, depth + 1)
+      : classifyText(nested.text, { shell: nested.shell, mode, stdin: input }, depth + 1);
     if (inner && inner.decision === "ask") return inner;
   }
 
@@ -1428,7 +2055,7 @@ function classifySegment(seg, prevSeg, ctx, depth) {
   }
 
   if (SQL_CLIENTS.has(cmd)) {
-    const r = classifySqlClient(cmd, args, seg, prevSeg);
+    const r = classifySqlClient(cmd, args, seg, input);
     if (r) return r;
   }
   const dep = classifyDeploy(cmd, args);
@@ -1531,5 +2158,5 @@ module.exports = {
   CATEGORIES,
   categories: CATEGORIES.map((c) => c.id),
   tokenize,
-  destructiveSql,
+  sqlWriteReason,
 };

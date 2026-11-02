@@ -20,7 +20,7 @@ Not for: authoring or applying migrations outside a pipeline (backend-migrate); 
 
 ## Before You Start
 
-1. Resolve the shared docs folder ("<shared>"): first `_shared/` inside this skill's folder (bundled installs, e.g. Claude.ai), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
+1. Resolve the shared docs folder ("<shared>"): first `_shared/` inside this skill's folder (bundled installs), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
 2. Read `<shared>/tool-rules.md` (mode=auto contract, Production Targets, Command Time Budgets, checkpoints) and `<shared>/host-tools.md` if the action names below don't match your host's tools. Read the System and Security sections of `<shared>/principles.md`.
 3. Load project memory per `<shared>/context-loading.md`: `project-overview.md`, `tech-stack.md`, `deployment.md` (priority 7) and `db-schema.md` for backing services; `decisions.md` for prior hosting choices. A missing `deployment.md` is expected on the first run; this skill creates it.
 4. If the detected stack matches a file in `<shared>/stacks/`, read it. Its Dockerfile, health and shutdown sections take precedence over the generic templates here.

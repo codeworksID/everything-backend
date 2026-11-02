@@ -30,7 +30,7 @@ AI コーディングエージェント向けのバックエンドエンジニ�
 
 共有の資料は `.agents/skills/_shared/` にあります。
 
-- すべてのスキルが従うルール（`tool-rules.md`、`context-loading.md`、`memory-schema.md`、`principles.md`）
+- すべてのスキルが従うルール（`tool-rules.md`、`context-loading.md`、`memory-schema.md`、`principles.md`）。インジェクションに強いデータアクセスのルールを定めた `sql-safety.md` も含みます（値は必ずバインドパラメータで渡す、識別子は許可リストで制限する、テナントやユーザーが所有するすべての行に所有者の条件を付ける、悪意のある入力でのテストを通過するまで変更は完了とみなさない）
 - ホストごとのツール名の対応表（`host-tools.md`）
 - スタック別リファレンス（`stacks/postgres.md`、`stacks/node-typescript.md`、`stacks/python-fastapi.md`）
 - 強制用スクリプト（`scripts/checkpoint.js`、`scripts/guard.js`）
@@ -71,7 +71,7 @@ Claude Code 内で次を実行します。
 
 - 破壊的な git コマンド（`reset --hard`、`clean -f`、`checkout -- <path>`、force push）
 - マイグレーションの apply、reset、drop コマンド
-- 破壊的な SQL
+- データやスキーマを書き換えるすべての SQL（`WHERE` 句があっても書き込みは安全になりません）
 - デプロイおよびインフラ系コマンド（`kubectl apply`、`helm upgrade`、`terraform apply`、`docker push`）
 - 再帰的な削除
 - シークレットファイル（`.env`、鍵）の編集
@@ -91,7 +91,7 @@ npx everything-backend --host claude
 
 ### Claude.ai
 
-スキルごとに自己完結した zip をビルドします（各 zip には `_shared/` のコピーが同梱されます）。
+Claude.ai では、パック全体を **1 つ** のスキル `everything-backend` として導入します。そのため、すべてのサブスキルが常にまとめてインストールされます。サブスキルは互いに依存している（共有ルール、引き継ぎ、相互参照）ため、一部のみのインストールはサポートしていません。次のコマンドでビルドします。
 
 ```bash
 git clone https://github.com/codeworksID/everything-backend.git
@@ -99,7 +99,9 @@ cd everything-backend
 npm run build:claude
 ```
 
-その後、各 `dist/claude-skills/<skill>.zip` を **Settings > Capabilities > Skills** からアップロードします。スクリプトを実行するには、コード実行が有効になっている必要があります。
+その後、`dist/claude/everything-backend.zip` を **Settings > Capabilities > Skills** からアップロードします。スクリプトを実行するには、コード実行が有効になっている必要があります。以前に個別の `backend-*` スキルをアップロードしている場合は、先にそれらを削除してください。
+
+バンドルは毎回のセッション開始時に自己チェックを行います。エントリポイントが `skills/` の一覧を確認し、すべてのファイルの SHA-256 を記録した `MANIFEST.json` に対して `verify.js`（または `verify.py`）を実行します。サブスキルやファイルが欠けている、または変更されている場合は処理を停止し、zip 全体を再アップロードするよう求めます。
 
 ### OpenCode、Cursor、Antigravity
 
@@ -146,7 +148,7 @@ node scripts/install.js --target "C:\Users\you\Documents\GitHub\my-project\.clau
 |---|---|---|
 | Claude Code プラグイン | `/plugin` が管理 | ガードフック（`hooks/hooks.json`） |
 | Claude Code スキル | `~/.claude/skills/<skill-name>/SKILL.md` | なし |
-| Claude.ai | スキルごとに 1 つの zip をアップロード（`_shared/` を同梱） | なし |
+| Claude.ai | 1 つのスキル：`everything-backend/skills/<skill-name>/SKILL.md`（`skills/_shared/` を同梱） | エントリポイントの `SKILL.md`、`MANIFEST.json`、`verify.js`、`verify.py` |
 | Antigravity (Gemini IDE) | `~/.gemini/config/plugins/everything-backend-plugin/skills/<skill-name>/SKILL.md` | `plugin.json` (name, version) |
 | Cursor | `~/.cursor/skills/<skill-name>/SKILL.md` | なし |
 | OpenCode / generic | `~/.agents/skills/<skill-name>/SKILL.md` | なし |
@@ -180,7 +182,7 @@ node scripts/install.js --target "C:\Users\you\Documents\GitHub\my-project\.clau
 ```bash
 npm run check          # package, frontmatter, references, fences, plugin manifest
 npm test               # guard.js and checkpoint.js tests
-npm run build:claude   # Claude.ai zips in dist/claude-skills/
+npm run build:claude   # Claude.ai bundle: dist/claude/everything-backend.zip
 node scripts/install.js --dry-run --target ./tmp-skills
 ```
 
@@ -203,7 +205,8 @@ node scripts/install.js --dry-run --target ./tmp-skills
 .claude-plugin/                      Claude Code plugin manifest and marketplace
 hooks/                               Claude Code guard hook
 scripts/install.js                   NPX/local installer
-scripts/build-claude-skills.js       Claude.ai zip builder
+scripts/build-claude-skills.js       Claude.ai bundle builder
+packaging/claude-ai/                 Bundle entry point and verifiers
 scripts/check-package.js             Consistency check (npm run check)
 scripts/test-scripts.js              Script tests (npm test)
 docs/                                Audit reports

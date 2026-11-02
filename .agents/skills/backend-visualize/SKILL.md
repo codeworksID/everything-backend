@@ -15,7 +15,7 @@ Turns real project sources into Mermaid diagrams that render, read well in light
 
 ## Before You Start
 
-1. Resolve the shared docs folder ("<shared>"): first `_shared/` inside this skill's folder (bundled installs, e.g. Claude.ai), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
+1. Resolve the shared docs folder ("<shared>"): first `_shared/` inside this skill's folder (bundled installs), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
 2. Read `<shared>/tool-rules.md` (mode=auto contract, checkpoints) and `<shared>/host-tools.md` if the actions named here do not match your host's tool names.
 3. Load project memory per `<shared>/context-loading.md`, but only the files the chosen diagram type needs (see the Sources table). If memory is missing or stale and the source is the codebase, suggest `backend-scan` and continue from code.
    - **Skip project and memory checks** when the source is a user description or pasted DDL/models. A quick sketch needs no project root.

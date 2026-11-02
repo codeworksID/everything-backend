@@ -95,8 +95,9 @@ Options:
 Claude Code plugin (skills plus the guard hook), run inside Claude Code:
   ${CLAUDE_PLUGIN_COMMANDS.join("\n  ")}
 
-Claude.ai: in a clone of the repo run "npm run build:claude", then upload each
-dist/claude-skills/<skill>.zip under Settings > Capabilities > Skills.
+Claude.ai: in a clone of the repo run "npm run build:claude", then upload
+dist/claude/everything-backend.zip (one skill containing all sub-skills)
+under Settings > Capabilities > Skills.
 `);
 }
 

@@ -30,7 +30,7 @@ Backend engineering skills for AI coding agents: project discovery, architecture
 
 Shared material lives in `.agents/skills/_shared/`:
 
-- the rules every skill follows (`tool-rules.md`, `context-loading.md`, `memory-schema.md`, `principles.md`)
+- the rules every skill follows (`tool-rules.md`, `context-loading.md`, `memory-schema.md`, `principles.md`), including `sql-safety.md`, the injection-proof data access rules (bound parameters only, allowlisted identifiers, owner predicates on every tenant or user row, and hostile-input tests before a change counts as done)
 - a tool-name map for each host (`host-tools.md`)
 - stack references (`stacks/postgres.md`, `stacks/node-typescript.md`, `stacks/python-fastapi.md`)
 - the enforcement scripts (`scripts/checkpoint.js`, `scripts/guard.js`)
@@ -71,7 +71,7 @@ The plugin installs all skills plus a `PreToolUse` guard hook. The hook makes Cl
 
 - destructive git commands (`reset --hard`, `clean -f`, `checkout -- <path>`, force push)
 - migration apply, reset, or drop commands
-- destructive SQL
+- any SQL that writes data or schema (a `WHERE` clause does not make a write safe)
 - deploy and infra commands (`kubectl apply`, `helm upgrade`, `terraform apply`, `docker push`)
 - recursive deletes
 - edits to secret files (`.env`, keys)
@@ -91,7 +91,7 @@ That copies them to `~/.claude/skills`. For a single project, run `npx everythin
 
 ### Claude.ai
 
-Build one self-contained zip per skill (each zip bundles its own copy of `_shared/`):
+Claude.ai gets the whole pack as **one** skill, `everything-backend`, so every sub-skill is always installed together. The sub-skills depend on each other (shared rules, handoffs, cross-references), so partial installs are not supported. Build it:
 
 ```bash
 git clone https://github.com/codeworksID/everything-backend.git
@@ -99,7 +99,9 @@ cd everything-backend
 npm run build:claude
 ```
 
-Then upload each `dist/claude-skills/<skill>.zip` under **Settings > Capabilities > Skills**. Code execution must be enabled for the scripts to run.
+Then upload `dist/claude/everything-backend.zip` under **Settings > Capabilities > Skills**. Code execution must be enabled for the scripts to run. If you uploaded individual `backend-*` skills before, remove them first.
+
+At the start of every session the bundle checks itself: its entry point lists `skills/` and runs `verify.js` (or `verify.py`) against `MANIFEST.json`, which holds the SHA-256 of every file. If any sub-skill or file is missing or changed, it stops and asks you to re-upload the full zip.
 
 ### OpenCode, Cursor, Antigravity
 
@@ -146,7 +148,7 @@ The installer copies every skill folder from `.agents/skills/` plus the shared `
 |---|---|---|
 | Claude Code plugin | managed by `/plugin` | guard hook (`hooks/hooks.json`) |
 | Claude Code skills | `~/.claude/skills/<skill-name>/SKILL.md` | none |
-| Claude.ai | one uploaded zip per skill, with `_shared/` inside | none |
+| Claude.ai | one skill: `everything-backend/skills/<skill-name>/SKILL.md`, with `skills/_shared/` | `SKILL.md` entry point, `MANIFEST.json`, `verify.js`, `verify.py` |
 | Antigravity (Gemini IDE) | `~/.gemini/config/plugins/everything-backend-plugin/skills/<skill-name>/SKILL.md` | `plugin.json` (name, version) |
 | Cursor | `~/.cursor/skills/<skill-name>/SKILL.md` | none |
 | OpenCode / generic | `~/.agents/skills/<skill-name>/SKILL.md` | none |
@@ -180,7 +182,7 @@ The installer skips skill folders that already exist unless you pass `--force`.
 ```bash
 npm run check          # package, frontmatter, references, fences, plugin manifest
 npm test               # guard.js and checkpoint.js tests
-npm run build:claude   # Claude.ai zips in dist/claude-skills/
+npm run build:claude   # Claude.ai bundle: dist/claude/everything-backend.zip
 node scripts/install.js --dry-run --target ./tmp-skills
 ```
 
@@ -203,7 +205,8 @@ node scripts/install.js --dry-run --target ./tmp-skills
 .claude-plugin/                      Claude Code plugin manifest and marketplace
 hooks/                               Claude Code guard hook
 scripts/install.js                   NPX/local installer
-scripts/build-claude-skills.js       Claude.ai zip builder
+scripts/build-claude-skills.js       Claude.ai bundle builder
+packaging/claude-ai/                 Bundle entry point and verifiers
 scripts/check-package.js             Consistency check (npm run check)
 scripts/test-scripts.js              Script tests (npm test)
 docs/                                Audit reports

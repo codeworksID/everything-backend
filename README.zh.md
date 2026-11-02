@@ -30,7 +30,7 @@
 
 共享内容位于 `.agents/skills/_shared/`：
 
-- 每个技能都遵循的规则（`tool-rules.md`、`context-loading.md`、`memory-schema.md`、`principles.md`）
+- 每个技能都遵循的规则（`tool-rules.md`、`context-loading.md`、`memory-schema.md`、`principles.md`），其中包括 `sql-safety.md`，即防注入的数据访问规则（只使用绑定参数、标识符走白名单、每个租户或用户所属的行都带上所有者条件，并且在用恶意输入测试通过之前，改动不算完成）
 - 各宿主环境的工具名称映射（`host-tools.md`）
 - 技术栈参考（`stacks/postgres.md`、`stacks/node-typescript.md`、`stacks/python-fastapi.md`）
 - 强制执行脚本（`scripts/checkpoint.js`、`scripts/guard.js`）
@@ -71,7 +71,7 @@
 
 - 破坏性的 git 命令（`reset --hard`、`clean -f`、`checkout -- <path>`、强制推送）
 - 执行、重置或删除迁移的命令
-- 破坏性的 SQL
+- 任何写入数据或 schema 的 SQL（有 `WHERE` 子句也不代表写入是安全的）
 - 部署与基础设施命令（`kubectl apply`、`helm upgrade`、`terraform apply`、`docker push`）
 - 递归删除
 - 编辑密钥文件（`.env`、密钥）
@@ -91,7 +91,7 @@ npx everything-backend --host claude
 
 ### Claude.ai
 
-为每个技能构建一个独立的 zip 包（每个 zip 都包含自己的一份 `_shared/`）：
+Claude.ai 会把整个技能包作为**一个**技能 `everything-backend` 安装，因此所有子技能总是一起安装。子技能之间相互依赖（共享规则、交接、交叉引用），所以不支持只安装其中一部分。构建方法：
 
 ```bash
 git clone https://github.com/codeworksID/everything-backend.git
@@ -99,7 +99,9 @@ cd everything-backend
 npm run build:claude
 ```
 
-然后在 **Settings > Capabilities > Skills** 中上传每个 `dist/claude-skills/<skill>.zip`。必须启用代码执行，脚本才能运行。
+然后在 **Settings > Capabilities > Skills** 中上传 `dist/claude/everything-backend.zip`。必须启用代码执行，脚本才能运行。如果你之前上传过单独的 `backend-*` 技能，请先将它们删除。
+
+每次会话开始时，该包都会自检：其入口文件会列出 `skills/`，并运行 `verify.js`（或 `verify.py`）对照 `MANIFEST.json` 进行校验，该文件记录了每个文件的 SHA-256。如果任何子技能或文件缺失或被修改，它会停止并要求你重新上传完整的 zip。
 
 ### OpenCode、Cursor、Antigravity
 
@@ -146,7 +148,7 @@ node scripts/install.js --target "C:\Users\you\Documents\GitHub\my-project\.clau
 |---|---|---|
 | Claude Code 插件 | 由 `/plugin` 管理 | guard hook（`hooks/hooks.json`） |
 | Claude Code 技能 | `~/.claude/skills/<skill-name>/SKILL.md` | 无 |
-| Claude.ai | 每个技能上传一个 zip，内含 `_shared/` | 无 |
+| Claude.ai | 一个技能：`everything-backend/skills/<skill-name>/SKILL.md`，附带 `skills/_shared/` | `SKILL.md` 入口文件、`MANIFEST.json`、`verify.js`、`verify.py` |
 | Antigravity (Gemini IDE) | `~/.gemini/config/plugins/everything-backend-plugin/skills/<skill-name>/SKILL.md` | `plugin.json` (name, version) |
 | Cursor | `~/.cursor/skills/<skill-name>/SKILL.md` | 无 |
 | OpenCode / generic | `~/.agents/skills/<skill-name>/SKILL.md` | 无 |
@@ -180,7 +182,7 @@ node scripts/install.js --target "C:\Users\you\Documents\GitHub\my-project\.clau
 ```bash
 npm run check          # package, frontmatter, references, fences, plugin manifest
 npm test               # guard.js and checkpoint.js tests
-npm run build:claude   # Claude.ai zips in dist/claude-skills/
+npm run build:claude   # Claude.ai bundle: dist/claude/everything-backend.zip
 node scripts/install.js --dry-run --target ./tmp-skills
 ```
 
@@ -203,7 +205,8 @@ node scripts/install.js --dry-run --target ./tmp-skills
 .claude-plugin/                      Claude Code plugin manifest and marketplace
 hooks/                               Claude Code guard hook
 scripts/install.js                   NPX/local installer
-scripts/build-claude-skills.js       Claude.ai zip builder
+scripts/build-claude-skills.js       Claude.ai bundle builder
+packaging/claude-ai/                 Bundle entry point and verifiers
 scripts/check-package.js             Consistency check (npm run check)
 scripts/test-scripts.js              Script tests (npm test)
 docs/                                Audit reports

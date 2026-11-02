@@ -49,7 +49,7 @@ Pick one casing for JSON fields and query parameters and use it everywhere. Defa
 ## Data Formats
 
 - Timestamps: RFC 3339 strings in UTC with an explicit offset (`2026-11-02T09:30:00Z`).
-- IDs: strings in JSON, even when the database uses integers, so the ID type can change later.
+- IDs: strings in JSON, even when the database uses integers, so the ID type can change later. Still type them in the spec: `format: uuid` plus a UUID `pattern`, or `pattern: '^[1-9][0-9]{0,18}$'` for integer keys. A malformed id returns 400 before any query runs.
 - Money: integer minor units plus a currency code (`{"amount": 1999, "currency": "EUR"}`), or a decimal string. Never a float.
 - Enums: lowercase strings; document every value.
 - Error messages for humans can be localized via `Accept-Language`; machine-readable error codes never change with language.
@@ -79,12 +79,12 @@ Cursor pagination (default for lists that grow, feeds, and anything over roughly
 - Request: `?limit=20&cursor=<opaque>`. `limit` has a default (20) and a maximum (100).
 - Response: `{"data": [...], "page": {"nextCursor": "...", "hasMore": true}}`. `nextCursor` is null on the last page.
 - The cursor encodes the sort key plus a unique tiebreaker (usually the ID), for example `(createdAt, id)`. Order by both columns and index them together.
-- Treat the cursor as opaque (base64 of the key values); validate it and return 400 for a malformed cursor.
+- Treat the cursor as opaque (base64 of the key values); validate it and return 400 for a malformed cursor. The client can forge a cursor, so the server type-checks every decoded value and binds it as a parameter (`_shared/sql-safety.md` rule 1). Give it a `maxLength` in the spec.
 - No total count by default. `COUNT(*)` on large tables is slow; offer it only when a consumer needs it and the table is small or the count is cached.
 
 Offset pagination (admin tables that need "jump to page N" on small or medium data):
 
-- Request: `?page=1&pageSize=20`, with a maximum `pageSize`.
+- Request: `?page=1&pageSize=20`, with a maximum `pageSize` (for example 100) and a maximum `page` so `OFFSET` cannot be pushed into a full scan.
 - Response: `{"data": [...], "page": {"page": 1, "pageSize": 20, "totalItems": 532, "totalPages": 27}}`.
 - Always sort by a stable key with a unique tiebreaker, or rows repeat or vanish between pages.
 
@@ -92,9 +92,16 @@ Optional for either style: a `Link` header (RFC 8288) with `rel="next"` and `rel
 
 ## Filtering and Sorting
 
-- Filters are query parameters named after fields: `?status=active&createdAfter=2026-01-01T00:00:00Z`.
-- Sorting: `?sort=createdAt` ascending, `?sort=-createdAt` descending. Allowlist the sortable fields; each needs an index.
-- Reject unknown filter or sort fields with 400 rather than silently ignoring them.
+Every value here reaches a query, so each one is constrained in the contract (`_shared/sql-safety.md` rules 2, 4-6, 10):
+
+- Filters are query parameters named after public fields: `?status=active&createdAfter=2026-01-01T00:00:00Z`. Each has a type and an `enum`, `format` or length limit. No generic `filter=`, `where=`, `q=status:active OR 1=1` expression language, or raw JSON query object.
+- Sorting: `?sort=createdAt` ascending, `?sort=-createdAt` descending. The spec lists the allowed values as an `enum` (`[createdAt, -createdAt, name, -name]`); each needs an index. A separate `order` parameter is `enum: [asc, desc]`.
+- Field selection (`fields`, `include`, `expand`): an array of `enum` values with `maxItems`.
+- Id sets (`?ids=a,b,c`): an array of typed ids with `maxItems` (for example 100). The server binds the array (`= ANY($1)`), never joins it into SQL.
+- Search (`q`): `maxLength` (for example 100). `%` and `_` match literally; the server escapes and binds them.
+- Public names are not column names. The server maps each allowed value to a fixed column through a server-side table; the API layer never forwards a raw client string into a query, ORDER BY, column list or NoSQL filter.
+- Reject unknown filter, sort or field values with 400 rather than silently ignoring them. The error names the parameter and never echoes SQL.
+- Filters only narrow the caller's own rows. Tenant and owner come from the authenticated principal, never from a query parameter (`_shared/sql-safety.md` rule 3).
 
 ## Optimistic Concurrency
 

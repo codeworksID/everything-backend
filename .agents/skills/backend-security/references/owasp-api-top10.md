@@ -18,7 +18,9 @@ Search:
 
 Read: for every `/{id}` route, the handler, service and query. Find where the principal (`req.user`, `current_user`, `ctx.Value`, `@AuthenticationPrincipal`) is compared with the object's owner or tenant.
 
-Pass when: every object route scopes the query by owner or tenant (or checks it after load and returns 404/403), including list, update, delete, export and nested routes. Row-level security or a repository that always injects the tenant counts if you confirm it cannot be bypassed.
+A correct query is not an access check: `WHERE id = $1` with a client-supplied id fails API1 even when it is fully parameterized. Apply `<shared>/sql-safety.md` -> The Rules, rule 3 (owner predicate) and rule 4 (bounded writes): the owner or tenant value is bound from the authenticated principal (session or verified token), never from the path, query or body.
+
+Pass when: every object route scopes the query by owner or tenant (or checks it after load and returns 404/403), including list, update, delete, export, bulk and nested routes, and the owner value comes from the principal. Row-level security or a repository that always injects the tenant counts if you confirm it cannot be bypassed (for RLS: the app role lacks `BYPASSRLS` and the tenant setting comes from the principal).
 
 Fix: scope queries by principal (`where: { id, ownerId: user.id }`), central policy check, 404 for objects of other tenants. Owner: `backend-auth` (policy design) or `backend-debug` (missing check in one handler).
 
@@ -151,7 +153,8 @@ Fix owner: `backend-implement`; resilience patterns with `backend-ops`.
 
 Check these in the same pass. Map findings to the closest Top 10 item or mark them "other".
 
-- **Injection**: string-built SQL (`query\(\`.*\$\{`, `execute\(f['\"]`, `\+ *req\.`, `\$queryRawUnsafe`, `raw\(`, `text\(f`, `fmt\.Sprintf\(.*SELECT`), NoSQL operators from input (`\$where`, `find\(req\.body`), shell (`exec\(|execSync\(|spawn\(.*shell:\s*true|subprocess.*shell=True|os\.system|Runtime\.getRuntime\(\)\.exec`), template injection (`render_template_string`, user-controlled template names). Pass when all are parameterized or use argument arrays.
+- **Injection (SQL and NoSQL)**: run the full review in "Injection Review" below. A quick grep is not enough for this item.
+- **Command and template injection**: shell (`exec\(|execSync\(|spawn\(.*shell:\s*true|subprocess.*shell=True|os\.system|Runtime\.getRuntime\(\)\.exec`), template injection (`render_template_string`, user-controlled template names). Pass when commands use argument arrays without a shell and templates are fixed files.
 - **Unsafe deserialization**: `pickle\.loads|yaml\.load\(|marshal\.loads|ObjectInputStream|node-serialize|unserialize\(|jsonpickle|XMLDecoder` (for `yaml.load`, a finding only without `Loader=SafeLoader`), XML parsers with external entities enabled.
 - **Path traversal**: file paths built from input (`path\.join\(.*req\.|open\(.*request\.|os\.Open\(.*r\.`, `sendFile\(`, `FileResponse\(`). Pass when the resolved path is checked to stay under a base directory.
 - **File uploads**: size limits, type checked by content (magic bytes) not only extension, files stored outside the web root or in private buckets, `Content-Disposition: attachment` on download, malware scanning where users share files.
@@ -159,3 +162,53 @@ Check these in the same pass. Map findings to the closest Top 10 item or mark th
 - **Webhook verification**: signature check with constant-time compare (`timingSafeEqual`, `hmac\.compare_digest`, `hmac\.Equal`), timestamp tolerance, event ID stored for replay protection, raw body used for the signature.
 - **Open redirects**: `res\.redirect\(req\.(query|body)`, `RedirectResponse\(.*request`, `next=` parameters without an allowlist.
 - **CSRF** on cookie-authenticated state-changing routes: covered by `backend-auth`; record the verdict here under API2.
+
+## Injection Review
+
+Read `<shared>/sql-safety.md` in full first; it is the standard this review applies (rules, the safe vs unsafe API table per stack, and Verification). Do not restate it in the report; cite the rule number in each finding (for example "violates sql-safety rule 2").
+
+Sources of untrusted input include the database itself. **Second-order injection**: a value stored earlier (a display name, a saved filter, a report definition, a column name kept in a settings table) and later concatenated into SQL is as dangerous as a request value. Trace stored values that reach query text, not only request fields.
+
+### Checklist (sql-safety.md -> The Rules)
+
+Record pass, finding or not applicable for each rule, with `file:line` evidence.
+
+1. **Values bound**: Every query passes values separately from the SQL text, including admin routes, jobs and migrations.
+    Search: `` query\(`.*\$\{ ``, `execute\(f['\"]`, `\.format\(.*(SELECT|INSERT|UPDATE|DELETE)`, `\+\s*\w+.*(WHERE|AND|OR)\b`, `fmt\.Sprintf\(.*(SELECT|INSERT|UPDATE|DELETE|WHERE)`, `String\.format\(.*(SELECT|WHERE)`, `"\s*\+\s*\w+\s*\+\s*"` near SQL keywords
+2. **Identifiers allowlisted**: Sort, column, table, direction and JSON path come from a server-side map; unknown values return 400.
+    Search: `orderBy\(|order_by\(|ORDER BY.*\$\{|Order\(|sort(By|Field)?\s*=\s*req`, `ASC|DESC` built from input, `sql\.Identifier`, `format\('%I'`
+3. **Owner predicate**: covered under API1; copy that verdict here.
+4. **Writes bounded**: UPDATE and DELETE include key and owner; no `WHERE 1=1` string building; bulk ids validated and capped.
+    Search: `WHERE 1\s*=\s*1`, `(UPDATE|DELETE)[^;]*$` without `WHERE`, `deleteMany\(|updateMany\(` (check the filter includes key and owner)
+5. **Array binding for lists**: IN lists bound as arrays or expanded by the driver, length capped.
+    Search: `join\(['\"],['\"]\)` near `IN`, `IN \(\$\{`, `IN \(" \+`
+6. **LIKE escaped and bound**: `%`, `_` and `\` escaped, `ESCAPE` clause present.
+    Search: `LIKE\s*['\"]%.*\$\{`, `LIKE '%" \+`, `ILIKE`, `contains\(|icontains`, `sanitize_sql_like`
+7. **No raw/unsafe APIs with input**: nothing from the "Unsafe with user input" column of the stack table in sql-safety.md receives input.
+    Search: `\$queryRawUnsafe|\$executeRawUnsafe|Prisma\.raw\(|sql\.raw\(|knex\.raw\(|whereRaw\(|orderByRaw\(|sequelize\.literal\(|literal_column\(|text\(f|\.extra\(|RawSQL\(|FromSqlRaw\(|ExecuteSqlRaw\(|createNativeQuery\(|\$\{[^}]+\}` in MyBatis XML, `find_by_sql|DB::raw\(`
+8. **Dynamic SQL in the DB**: PL/pgSQL `EXECUTE` uses `format('%I')` and `USING`; T-SQL uses `sp_executesql`; `SECURITY DEFINER` functions set `search_path`.
+    Search: `EXECUTE\s+['\"].*\|\|`, `EXEC\s*\(`, `SECURITY DEFINER` in migrations and `.sql` files
+9. **NoSQL operators**: Scalars rejected when objects arrive; `$`-prefixed keys stripped; no `$where`/`$function`/`$accumulator`/`mapReduce` with input; Mongoose `sanitizeFilter` or `strictQuery`; Redis Lua and search queries not built from strings.
+    Search: `find(One)?\(req\.(body|query)`, `\$where|\$function|\$accumulator|mapReduce`, `sanitizeFilter|strictQuery|express-mongo-sanitize`, `eval\(|EVAL ` with concatenation, `query_string`
+10. **Boundary validation**: Request schemas enforce type, length, format and enums; noted as defense in depth only.
+    Search: `zod|pydantic|@Valid|binding:"` on handlers that query
+11. **Least-privilege DB role**: App role has DML only on its schema; no `SUPERUSER`, `BYPASSRLS`, DDL, file or program privileges; migrations use a separate role; multi-statement off; `statement_timeout` set.
+    Search: `multipleStatements:\s*true`, `GRANT ALL|SUPERUSER|BYPASSRLS|pg_read_server_files|pg_execute_server_program|FILE ON`, `statement_timeout`, the `DATABASE_URL` user name compared with the migration user in config and `deployment.md`
+12. **Errors don't leak SQL**: DB errors map to generic API errors; no driver message, query text or stack in responses.
+    Search: `err\.message|e\.args|str\(e\)|getMessage\(\)` returned in responses near DB calls, `detail=str\(`
+
+For rule 11 you usually cannot query a live database. Read grants in migrations, infra code and `deployment.md`; if the role's privileges cannot be seen, record "Not assessed: role grants not in repo" and give the user the check to run (`\du` and `\dp` in psql, `SHOW GRANTS` in MySQL).
+
+### Verification (sql-safety.md -> Verification 1-4)
+
+1. **Static search**: the rule searches above plus the unsafe API table, over all source roots. Read every hit in context.
+2. **Read every repository/DAO/query file** reached from an entry point in scope, including query builders split across lines and helper functions that assemble fragments.
+3. **SAST**: `semgrep scan --config p/sql-injection --config p/<language> --metrics=off` (installing semgrep is Always Ask First), `bandit -r <src> -t B608` for Python, `gosec -include=G201,G202 ./...` for Go. Record each tool as run or "Not run" with the exact command.
+4. **Negative tests**: check that the hostile payload tests from sql-safety.md exist for each endpoint taking a search, filter, sort, id or free-text parameter. Missing tests are a finding (Medium, owner `backend-test`) even when the code is safe. Run them only against a local instance this run started.
+
+### Verdict and Severity
+
+- Pass only when all twelve rules pass or are not applicable with a reason, and Verification 1-3 ran (or are listed under "Not run").
+- String-built SQL or NoSQL with untrusted input (including second-order), an unsafe raw API with input, or a missing owner predicate: **Critical** when reachable from a public or low-privilege endpoint, **High** otherwise (sql-safety.md -> Verification 5). Map SQL/NoSQL injection to CWE-89 / CWE-943, owner predicate gaps to API1 (CWE-639).
+- Rules 10-12 gaps alone (no injection path) are Medium unless they combine with another finding.
+- Fix owner: `backend-debug` (one query plus regression test), `backend-refactor` (a pattern across many files), `backend-ops` or `backend-deploy` (DB role and grants).

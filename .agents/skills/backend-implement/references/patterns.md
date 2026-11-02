@@ -6,7 +6,7 @@ Minimal, copyable shapes for the transport, service, and repository layers, plus
 
 - Controllers / handlers: transport only. No business branching beyond input validation and response mapping.
 - Services / use cases: business workflow, invariants, authorization checks, transaction ownership.
-- Repositories: persistence only. No transport or domain orchestration.
+- Repositories: persistence only. No transport or domain orchestration. Every query is parameterized and owner-scoped per `<shared>/sql-safety.md`.
 - External adapters: email, queues, storage, HTTP clients behind interfaces or ports.
 - Composition root: assembles concrete implementations and injects dependencies.
 
@@ -115,6 +115,44 @@ Rules the service shape encodes:
 - If `backend-auth` chose anti-enumeration for sign-up, return the generic response it specifies instead of a 409 that reveals the email exists.
 - Return a response DTO with explicit fields. Never serialize the entity directly.
 
+## Minimal Repository (owner-scoped, TypeScript + node-postgres)
+
+Every query follows `<shared>/sql-safety.md`. This shape covers the three rules new code breaks most often: bound values, an allowlisted sort, and the owner predicate.
+
+```typescript
+// Sort keys the API accepts -> fixed SQL. Anything else is rejected with 400 at the boundary.
+const ORDER_BY = {
+  created: 'created_at',
+  name: 'name',
+} as const;
+type SortKey = keyof typeof ORDER_BY;
+
+async listProjects(tenantId: string, q: { search?: string; sort: SortKey; dir: 'asc' | 'desc'; limit: number }) {
+  const column = ORDER_BY[q.sort];                    // allowlisted identifier, never the client's string
+  const direction = q.dir === 'desc' ? 'DESC' : 'ASC';
+  // Escape \ % _ in the search term, then bind the wrapped pattern (sql-safety.md rule 6).
+  const like = q.search ? '%' + q.search.replace(/[\\%_]/g, (c) => '\\' + c) + '%' : null;
+  const { rows } = await this.db.query(
+    `SELECT id, name, created_at FROM projects
+      WHERE tenant_id = $1
+        AND ($2::text IS NULL OR name ILIKE $2 ESCAPE '\\')
+      ORDER BY ${column} ${direction}, id
+      LIMIT $3`,                                     // only constants are interpolated; values are bound
+    [tenantId, like, q.limit],
+  );
+  return rows;
+}
+
+// tenantId comes from the authenticated principal (req.auth.tenantId), never from the request body or path.
+async updateProjectName(tenantId: string, id: string, name: string): Promise<boolean> {
+  const { rowCount } = await this.db.query(
+    'UPDATE projects SET name = $1 WHERE id = $2 AND tenant_id = $3',
+    [name, id, tenantId],
+  );
+  return rowCount === 1;                             // 0 -> the service throws NotFoundError (404)
+}
+```
+
 ## Idempotent POST (critical writes)
 
 For payments, orders, and other critical POSTs that clients retry:
@@ -140,3 +178,4 @@ For payments, orders, and other critical POSTs that clients retry:
 - Request validation
 - Response shape and error mapping
 - Authentication and authorization behavior
+- Hostile input on every search, filter, sort and id parameter, and another tenant's id returning 404 or 403 (`<shared>/sql-safety.md` -> Verification, step 4; write them with `backend-test` conventions)

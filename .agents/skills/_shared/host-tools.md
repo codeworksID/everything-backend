@@ -67,7 +67,7 @@ The `category` field is one of these ids (`node <shared>/scripts/guard.js --list
 |---|---|---|
 | `git-history` | default | reset --hard, clean -f, checkout -- path / checkout ., restore (not --staged), push --force, branch -D, checkout -B / switch -C, stash drop/clear |
 | `migration` | default | applying, reverting or resetting migrations, or pushing a schema to a database |
-| `destructive-sql` | default | SQL clients running DROP, TRUNCATE, ALTER, DELETE/UPDATE without WHERE, or SQL from a file; dropdb, mysqladmin drop, pg_restore --clean |
+| `database-write` | default | any SQL, MongoDB or Redis statement that is not a plain read: INSERT/UPDATE/DELETE with or without WHERE, DDL, GRANT, COPY, side-effect functions, EXPLAIN ANALYZE of a write, SELECT ... INTO; SQL from a file; dropdb, mysqladmin drop, pg_restore --clean |
 | `deploy-infra` | default | kubectl, helm, terraform/tofu, pulumi, docker push, compose down -v, fly, vercel --prod, cloud CLI deploys and deletes |
 | `recursive-delete` | default | rm -rf / Remove-Item -Recurse outside obvious build, cache and temp folders |
 | `git-write` | strict | any git ref write (commit, push, merge, rebase, switch/checkout of a ref, stash, tag) |
@@ -150,7 +150,7 @@ OpenCode can ask before matching shell commands. This `opencode.json` snippet mi
 }
 ```
 
-Glob patterns are coarser than `guard.js`: `psql *` asks for every psql call (guard only asks for destructive SQL), `git restore *` also asks for `git restore --staged`, `rm -rf *` misses `rm -fr`, and a command hidden after `&&` may not match a prefix pattern. Running `guard.js` remains the more precise check.
+Glob patterns are coarser than `guard.js`: `psql *` asks for every psql call (guard only asks for statements that write), `git restore *` also asks for `git restore --staged`, `rm -rf *` misses `rm -fr`, and a command hidden after `&&` may not match a prefix pattern. Running `guard.js` remains the more precise check.
 
 ### Cursor and Antigravity
 
@@ -165,7 +165,7 @@ Each skill is a folder with `SKILL.md`, optional `references/`, and access to `_
 | Claude Code (plugin) | installed through the plugin system; ships the skills plus `hooks/guard-hook.js` | sibling folder inside the plugin |
 | Claude Code (personal) | `~/.claude/skills/<skill>/` | `~/.claude/skills/_shared/` |
 | Claude Code (project) | `<project>/.claude/skills/<skill>/` | `<project>/.claude/skills/_shared/` |
-| Claude.ai | upload each skill as a zip (Settings -> Capabilities -> Skills; code execution must be enabled). `node scripts/build-claude-skills.js` builds the zips | bundled: copy `_shared/` into each skill folder before zipping |
+| Claude.ai | one skill, `everything-backend.zip`, that contains every sub-skill under `skills/<skill>/` (Settings -> Capabilities -> Skills; code execution must be enabled). `npm run build:claude` builds it. Its entry `SKILL.md` verifies the bundle is complete (`verify.js` / `verify.py` against `MANIFEST.json`) and stops if any sub-skill is missing | `everything-backend/skills/_shared/` (sibling of the sub-skills) |
 | OpenCode / OMO, generic agents | `~/.agents/skills/<skill>/` or `<project>/.agents/skills/<skill>/` | sibling `_shared/` |
 | Cursor | `~/.cursor/skills/<skill>/` | sibling `_shared/` |
 | Antigravity | `~/.gemini/config/plugins/everything-backend-plugin/skills/<skill>/` | sibling `_shared/` |

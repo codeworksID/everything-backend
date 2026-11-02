@@ -57,6 +57,8 @@ Do not hand-craft tokens by copying real ones. Generate test tokens in a helper 
 
 Use two users (and two tenants for multi-tenant apps) created by factories in every authorization test file. Assert both the status and that the other user's data did not change (re-read it).
 
+For injection payloads on search, filter, sort and id parameters, NoSQL operator objects, and runnable cross-tenant examples, see `references/security-tests.md`.
+
 ### Session and browser-facing cases (when the API uses cookies)
 
 | Case | Expected |

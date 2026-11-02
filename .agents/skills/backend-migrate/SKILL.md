@@ -18,7 +18,7 @@ Not for: code or framework migrations, strangler-fig rewrites (backend-refactor)
 
 ## Before You Start
 
-1. Resolve the shared docs folder ("<shared>"): first `_shared/` inside this skill's folder (bundled installs, e.g. Claude.ai), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
+1. Resolve the shared docs folder ("<shared>"): first `_shared/` inside this skill's folder (bundled installs), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
 2. Read `<shared>/tool-rules.md` (mode=auto contract, Production Targets, Command Time Budgets, checkpoints) and `<shared>/host-tools.md` if the action names below don't match your host's tools. Read the Database section of `<shared>/principles.md`.
 3. Load project memory per `<shared>/context-loading.md`, with `db-schema.md`, `tech-stack.md` and `decisions.md` as high priority, plus the `## Migration Phases` section of `deployment.md` if it exists. Missing memory is fine: create the file you need when you first append to it (format in `<shared>/memory-schema.md`).
 4. If the detected stack matches a file in `<shared>/stacks/`, read it. For PostgreSQL read `<shared>/stacks/postgres.md`.
@@ -37,6 +37,7 @@ These are non-negotiable. Details and examples live in the references.
 6. **CONCURRENTLY, outside a transaction.** Index builds and drops on existing PostgreSQL tables use `CONCURRENTLY`, one statement per migration file, with the tool's no-transaction opt-out. Never "fix" the error by dropping `CONCURRENTLY`. Clean up INVALID indexes before retrying.
 7. **Review generated SQL.** Generators often turn a rename into drop + add. Read every generated migration for `DROP`, type changes and table rewrites before it is applied.
 8. **Contract is one-way and gated.** Before any DROP: no references remain, a release has run without the old structure, a restorable backup or PITR covers the last write (backup gate), and the user confirmed. Down migrations cannot bring dropped data back; label them one-way.
+9. **No SQL built from strings, and the right role.** Migrations, backfills and trigger functions follow `<shared>/sql-safety.md` (rules 1, 2 and 8): values are bound (`USING`, driver placeholders), dynamic identifiers come from a fixed list or the catalog and are quoted with `format('%I')` or the driver's identifier function, DDL literals use `format('%L')`. Values read from the database count as untrusted. Migrations run with a separate migration role, never the app role (rule 11; [references/tools.md](references/tools.md) -> Migration Role). Run the sql-safety Verification over every migration and backfill file before reporting done.
 
 ## Execution Boundary
 
@@ -55,7 +56,7 @@ Follows `<shared>/tool-rules.md` -> `mode=auto` Contract; that contract wins on 
 2. **Classify.** Decide additive vs expand/contract. For each statement, name the lock it takes and how long it holds it, and choose online vs offline ([references/zero-downtime.md](references/zero-downtime.md) -> Decision Tables). Output: the phase list.
 3. **Start a checkpoint** (see Checkpoints below) with one step per phase you will write now.
 4. **Write the migrations** with the project's tool and naming convention: generate, then review and hand-edit the SQL. Add timeouts, no-transaction opt-outs and one concurrent statement per file. Write a down migration for each, and label each file expand/contract/backfill, pre-deploy/post-deploy/job, and one-way where true. Output: migration files.
-5. **Write backfills** if data moves: keyset-batched, idempotent, resumable, with a parity check ([references/backfills.md](references/backfills.md)). Output: backfill script or job.
+5. **Write backfills** if data moves: keyset-batched, idempotent, resumable, with a parity check, all values bound and identifiers allowlisted ([references/backfills.md](references/backfills.md) -> Dynamic SQL in Migrations and Backfills). Output: backfill script or job.
 6. **Verify locally** on a disposable database: up, down, up; linter and drift check if available; tests that touch the changed tables ([references/rollback-and-verification.md](references/rollback-and-verification.md)). Report anything not run as "did not run".
 7. **Write the phase plan and runbook** ([references/phase-plan.md](references/phase-plan.md)): the `## Migration Phases` entry in `deployment.md`, a `decisions.md` entry, and `docs/runbooks/migration-<slug>.md` with order of releases, commands, timeouts, parity checks, backup gate and rollback path.
 8. **Apply only with approval.** Ask First, then apply to the approved target (staging first). After each apply, record the environment, date and migration IDs in the phase plan and validate constraints and indexes. Production applies happen only on explicit approval, normally through the deploy pipeline step.
@@ -105,7 +106,8 @@ File rollback (`checkpoint.js rollback`) only reverts files. It does not undo a 
 
 - [references/expand-contract.md](references/expand-contract.md): read when renaming, retyping, splitting or dropping anything, or writing a dual-write trigger; holds the full rename example, Carry Constraints and the Contract Gate.
 - [references/zero-downtime.md](references/zero-downtime.md): read before writing any DDL for an existing table; lock timeouts, safe NOT NULL, constraints, concurrent indexes, decision tables, MySQL and MongoDB notes.
-- [references/tools.md](references/tools.md): read when detecting the tool, generating migrations, needing a no-transaction opt-out, resolving parallel-branch conflicts, or adding a linter.
-- [references/backfills.md](references/backfills.md): read when any data must move or be transformed.
+- [references/tools.md](references/tools.md): read when detecting the tool, generating migrations, setting up the migration role and app-role grants, needing a no-transaction opt-out, resolving parallel-branch conflicts, or adding a linter.
+- [references/backfills.md](references/backfills.md): read when any data must move or be transformed, or a migration uses dynamic SQL (PL/pgSQL `EXECUTE`, loops over partitions or tenant schemas, raw SQL in a migration hook).
+- `<shared>/sql-safety.md`: read before writing any migration, backfill or trigger that contains SQL beyond constant DDL.
 - [references/rollback-and-verification.md](references/rollback-and-verification.md): read when writing down migrations, verifying locally or on staging, checking query plans, or rolling back.
 - [references/phase-plan.md](references/phase-plan.md): read when writing the phase plan, runbook or decisions entry, or resuming a multi-release change.

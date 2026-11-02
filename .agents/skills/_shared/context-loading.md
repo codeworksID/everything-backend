@@ -10,8 +10,8 @@ Steps name actions ("find files", "read a file", "run a shell command"). `host-t
 
 Let `<skill-dir>` be the directory that contains the current `SKILL.md`. Use the first of these that exists as `<shared>`:
 
-1. `<skill-dir>/_shared/` - bundled installs (Claude.ai zip uploads, or any install that copies `_shared/` into each skill).
-2. `<skill-dir>/../_shared/` - the normal layout, `_shared/` as a sibling of the skill folders (installer, plugins, per-project and global installs).
+1. `<skill-dir>/_shared/` - installs that copy `_shared/` into each skill folder.
+2. `<skill-dir>/../_shared/` - the normal layout, `_shared/` as a sibling of the skill folders (installer, plugins, per-project and global installs, and the Claude.ai bundle, where it is `everything-backend/skills/_shared/`).
 3. `<project-root>/.agents/skills/_shared/`
 4. `<project-root>/.claude/skills/_shared/`
 5. `~/.agents/skills/_shared/`
@@ -138,7 +138,7 @@ Each SKILL.md uses the standard "Before You Start" block:
 ```markdown
 ## Before You Start
 
-1. Resolve the shared docs folder ("<shared>"): first "_shared/" inside this skill's folder (bundled installs, e.g. Claude.ai), then "../_shared/" next to it; other fallbacks are in <shared>/context-loading.md -> Resolving _shared/ Files. A missing shared doc is a warning, not a stop.
+1. Resolve the shared docs folder ("<shared>"): first "_shared/" inside this skill's folder (bundled installs), then "../_shared/" next to it; other fallbacks are in <shared>/context-loading.md -> Resolving _shared/ Files. A missing shared doc is a warning, not a stop.
 2. Read <shared>/tool-rules.md (mode=auto contract, checkpoints) and <shared>/host-tools.md if the tool names below don't match your host.
 3. Load project memory per <shared>/context-loading.md.
 4. If the detected stack matches a file in <shared>/stacks/, read it.

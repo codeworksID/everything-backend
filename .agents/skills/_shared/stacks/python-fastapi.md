@@ -160,6 +160,71 @@ ok = password_hash.verify(raw, hashed)
 
 With `argon2-cffi`: `ph = argon2.PasswordHasher()`; `ph.verify(stored, raw)` raises `argon2.exceptions.VerifyMismatchError` on a wrong password; rehash when `ph.check_needs_rehash(stored)` is true. Migrating from passlib bcrypt: `PasswordHash((Argon2Hasher(), BcryptHasher()))` (install `pwdlib[argon2,bcrypt]`) verifies old hashes; `verify_and_update(raw, stored)` returns a new Argon2 hash to save on next login.
 
+## Data Access Safety
+
+Injection-proof data access is mandatory. The rules, the safe/unsafe API table for SQLAlchemy, psycopg, asyncpg and Django, and the required verification are in `_shared/sql-safety.md`; this section only shows the Python forms. The owner (`user.tenant_id`, `user.id`) always comes from the authenticated principal (`CurrentUser`), never from the body, path or query.
+
+```python
+# orders/schemas.py: validation is defense in depth, not the fix
+class ListOrdersQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    sort: Literal["created", "total"] = "created"
+    direction: Literal["asc", "desc"] = "desc"
+    limit: int = Field(20, ge=1, le=100)
+    search: str | None = Field(None, max_length=100)
+
+# orders/repository.py
+from sqlalchemy import bindparam, select, text, update
+
+SORT_COLUMNS = {"created": Order.created_at, "total": Order.total_cents}  # server-side allowlist
+
+async def get_order(session: AsyncSession, user: User, order_id: int) -> Order | None:
+    stmt = select(Order).where(Order.id == order_id, Order.tenant_id == user.tenant_id)
+    return await session.scalar(stmt)                     # None -> NotFound (404)
+
+async def set_status(session: AsyncSession, user: User, order_id: int, status: str) -> None:
+    result = await session.execute(
+        update(Order)
+        .where(Order.id == order_id, Order.tenant_id == user.tenant_id)  # key + owner: bounded write
+        .values(status=status)                                           # explicit fields only
+    )
+    if result.rowcount == 0:
+        raise NotFound("order not found")
+
+async def list_orders(session: AsyncSession, user: User, q: ListOrdersQuery) -> list[Order]:
+    col = SORT_COLUMNS[q.sort]                            # never order_by(text(q.sort))
+    stmt = (select(Order).where(Order.tenant_id == user.tenant_id)
+            .order_by(col.asc() if q.direction == "asc" else col.desc())
+            .limit(q.limit))
+    if q.search:
+        stmt = stmt.where(Order.reference.icontains(q.search, autoescape=True))  # escapes % _ and binds
+    return list(await session.scalars(stmt))
+```
+
+Raw SQL, when Core expressions cannot express it:
+
+```python
+# SQLAlchemy text(): named params, list via an expanding bindparam (cap len(ids) first)
+stmt = text("SELECT id, status FROM orders WHERE tenant_id = :tenant AND id IN :ids").bindparams(
+    bindparam("ids", expanding=True))
+rows = await session.execute(stmt, {"tenant": user.tenant_id, "ids": ids})
+
+# asyncpg: $n placeholders, list as one array parameter
+await conn.fetch("SELECT id FROM orders WHERE tenant_id = $1 AND id = ANY($2::bigint[])", tenant_id, ids)
+
+# psycopg 3: identifier only after the allowlist lookup, quoted with sql.Identifier; values as params
+from psycopg import sql
+SORT_COLUMN_NAMES = {"created": "created_at", "total": "total_cents"}
+query = sql.SQL("SELECT id FROM orders WHERE tenant_id = %s ORDER BY {} DESC LIMIT %s").format(
+    sql.Identifier(SORT_COLUMN_NAMES[q.sort]))
+await cur.execute(query, (tenant_id, q.limit))
+```
+
+- Banned with input: `text(f"...")`, `text("..." + v)`, `"..." % v` or `.format()` into SQL, `literal_column(input)`, `order_by(text(input))`, `cursor.execute(f"...")`. ruff `S608` and bandit `B608` flag most of them; keep `S` enabled.
+- MongoDB (motor, beanie): declare fields as `str`/`int` in the Pydantic model so `{"$ne": null}` fails validation; never pass a raw request dict as a filter; never `$where` with input.
+- Map `IntegrityError` and driver errors to `DomainError` subclasses; never put `str(exc)` (it contains SQL) in a response.
+- Before reporting done, run `_shared/sql-safety.md` -> Verification (static search, read every changed `repository.py`/`service.py`, semgrep, negative tests with hostile payloads through `AsyncClient`).
+
 ## Alembic Workflow
 
 1. Create with the async template if the app is async: `alembic init -t async migrations`. In `env.py`, set `target_metadata = Base.metadata` and import every models module so autogenerate sees them.
@@ -278,7 +343,10 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 |---|---|---|
 | Sync DB driver / `requests` / `time.sleep` inside `async def` | Blocks the event loop; all requests stall | Use async drivers (`asyncpg`, `httpx.AsyncClient`), or declare the route `def` so it runs in the threadpool, or `await anyio.to_thread.run_sync(fn)` |
 | Lazy-loaded relationships in async code | `MissingGreenlet` errors, or N+1 queries | `selectinload()` / `joinedload()` in the query; set `lazy="raise"` on relationships to catch misses |
-| Loop issuing one query per item | N+1 | One query with `IN (...)` or eager loading; check with `echo=True` in tests |
+| Loop issuing one query per item | N+1 | One query with `Model.id.in_(ids)` (bound, capped list) or eager loading; check with `echo=True` in tests |
+| SQL built with f-strings, `%`, `.format()` or `+`; `text(f"...")`, `literal_column(input)` | SQL injection | Core/ORM expressions or `text()` with bound params (Data Access Safety, `_shared/sql-safety.md`) |
+| `order_by` / column names taken from query params | Injection through identifiers | Map through a server-side allowlist (`SORT_COLUMNS`); reject unknown values with 400 |
+| `session.get(Order, id)` or `where(Order.id == id)` alone on tenant- or user-owned rows | BOLA: any user reads or edits any row by id | Add `Order.tenant_id == user.tenant_id` (owner from the authenticated principal) to every read and write |
 | `expire_on_commit=True` with async sessions | Attribute access after commit triggers implicit IO | `async_sessionmaker(..., expire_on_commit=False)` |
 | Module-level `AsyncSession` shared across requests | Cross-request data leaks, concurrency errors | One session per request via dependency |
 | Returning ORM objects with no response model | Leaks hashed passwords, internal fields | `response_model=...Out` |
@@ -293,6 +361,7 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 - Settings: `django-environ` or pydantic-settings; `DEBUG=False`, `ALLOWED_HOSTS`, `SECURE_*` and `CSRF_TRUSTED_ORIGINS` set in production.
 - Migrations: `python manage.py makemigrations --check --dry-run` (detect drift), `python manage.py sqlmigrate <app> <number>` (show SQL) and `python manage.py showmigrations` are safe. `python manage.py makemigrations` writes files. **Always Ask First**: `python manage.py migrate`, `migrate <app> <earlier>` (rollback), `flush`. Renames: Django asks interactively whether a field was renamed; answer correctly or write `RenameField` by hand. Use `AddIndexConcurrently` (from `django.contrib.postgres.operations`) with `atomic = False` for large tables. `RunPython` needs a reverse function.
 - DRF: set `DEFAULT_PERMISSION_CLASSES` to authenticated by default; scope querysets in `get_queryset()` to the user or tenant; use `select_related` / `prefetch_related` to avoid N+1; explicit `fields` on serializers (never `"__all__"` for writes); `read_only_fields` for `id`, owner and role.
+- Raw SQL: `Model.objects.raw("... %s", [v])` and `cursor.execute(sql, [v])` bind values. Never `.raw(f"...")`, `.extra(where=[f"..."])`, `RawSQL` with interpolation, or `order_by(request.GET["sort"])`; map sort keys through an allowlist. `get_object_or_404(Order, pk=pk, tenant=request.user.tenant)`, not `pk` alone.
 - Auth: session auth needs CSRF; token or JWT auth (`djangorestframework-simplejwt`) needs the same alg pinning and claim checks as above.
 - Tests: `pytest-django` with the `db` fixture (each test in a rolled-back transaction); `APIClient` for requests.
 - Async: Django's async ORM is partial; wrap sync ORM calls in `sync_to_async` inside async views, or keep views sync.

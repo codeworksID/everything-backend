@@ -161,7 +161,7 @@ CREATE POLICY tenant_isolation ON orders
 
 ```sql
 BEGIN;
-SELECT set_config('app.tenant_id', $1, true);  -- true = transaction-local, like SET LOCAL
+SELECT set_config('app.tenant_id', $1, true);  -- $1 = tenant from the verified token; true = transaction-local
 -- queries
 COMMIT;
 ```
@@ -169,6 +169,44 @@ COMMIT;
   A session-level `SET app.tenant_id` leaks to the next client that gets the pooled connection.
 - If `app.tenant_id` is unset, `current_setting(..., true)` returns NULL, or `''` on a connection that set it earlier (hence `nullif`), and the policy matches no rows. Test that case.
 - Test isolation: as tenant A, read, update and delete tenant B's rows by ID; expect zero rows affected.
+- RLS does not replace the owner predicate in queries (`_shared/sql-safety.md` rule 3). Keep `AND tenant_id = $n` in every query; RLS catches the one you forget. The tenant value always comes from the authenticated principal, never from the request body, path or query string.
+
+## Safe Query Patterns
+
+Rules and verification live in `_shared/sql-safety.md`. These are the Postgres forms of them. `$n` is a bound parameter; the owner parameter comes from the authenticated principal.
+
+```sql
+-- Owner-scoped read and write. Zero rows -> 404, never a fallback query without the owner.
+SELECT id, status, total_cents FROM orders WHERE id = $1 AND tenant_id = $2;
+UPDATE orders SET status = $3 WHERE id = $1 AND tenant_id = $2 RETURNING id;
+DELETE FROM orders WHERE id = $1 AND tenant_id = $2;
+
+-- Lists: one array parameter (length capped in the app), never ids joined into the text.
+SELECT id, status FROM orders WHERE tenant_id = $1 AND id = ANY($2::bigint[]);
+
+-- Search: the app escapes \ % _ in the term, then binds it.
+SELECT id, name FROM customers
+WHERE tenant_id = $1 AND name ILIKE '%' || $2 || '%' ESCAPE '\'
+ORDER BY name LIMIT 50;
+```
+
+- Sort columns and direction cannot be bound. The application maps the client's value through a fixed allowlist to a constant SQL fragment (examples in `node-typescript.md` and `python-fastapi.md` -> Data Access Safety) and rejects anything else with 400.
+- Pagination: bind `LIMIT` and `OFFSET` (or the keyset cursor) as parameters and cap the limit in the app.
+- Dynamic SQL in PL/pgSQL: allowlist the identifier, quote it with `format('%I')`, and pass values with `USING`. Never `EXECUTE '...' || value`.
+
+```sql
+CREATE FUNCTION app.count_owned(p_table text, p_tenant bigint) RETURNS bigint
+LANGUAGE plpgsql SET search_path = app, pg_temp AS $$
+DECLARE n bigint;
+BEGIN
+  IF p_table NOT IN ('orders', 'customers') THEN   -- allowlist first
+    RAISE EXCEPTION 'table not allowed: %', p_table;
+  END IF;
+  EXECUTE format('SELECT count(*) FROM app.%I WHERE tenant_id = $1', p_table)
+    INTO n USING p_tenant;                          -- value bound, identifier quoted
+  RETURN n;
+END $$;
+```
 
 ## Connection Pooling
 
@@ -277,8 +315,9 @@ ALTER DEFAULT PRIVILEGES FOR ROLE app_owner IN SCHEMA app
 
 - Never run the application as a superuser or as the table owner (owners bypass RLS unless `FORCE` is set).
 - Require TLS: `sslmode=verify-full` (or at least `require`) in connection strings for non-local databases; `hostssl` rules in `pg_hba.conf`; use `scram-sha-256`, not `md5` or `trust`.
-- Always use parameterized queries. Never build SQL by string concatenation; for dynamic identifiers use `format('%I', ...)` or the driver's identifier escaping.
-- `SECURITY DEFINER` functions: set `search_path` explicitly and grant `EXECUTE` narrowly.
+- Injection-proof queries are mandatory: follow `_shared/sql-safety.md` (rules, per-driver safe APIs, verification). Never build SQL by string concatenation. Postgres-specific patterns are in Safe Query Patterns below.
+- `SECURITY DEFINER` functions: set `search_path` explicitly (`SET search_path = app, pg_temp`) and grant `EXECUTE` narrowly (`REVOKE EXECUTE ... FROM PUBLIC` first).
+- Do not grant the app role `pg_read_server_files`, `pg_write_server_files` or `pg_execute_server_program`; they turn an injection into file access or command execution. Set a role-level timeout so one crafted query cannot hold connections: `ALTER ROLE app_rw SET statement_timeout = '5s';`.
 - `pgcrypto`: `gen_random_bytes`, `crypt()` with `gen_salt('bf')` exist, but prefer hashing passwords in the application (argon2id/bcrypt) and encrypting sensitive fields with app-managed keys. Do not put keys in SQL or migration files.
 - Keep credentials in a secret manager or environment, rotate them, and give each service its own role so access can be audited and revoked.
 - Enable `log_connections` and audit logging (for example the `pgaudit` extension) where compliance requires it.

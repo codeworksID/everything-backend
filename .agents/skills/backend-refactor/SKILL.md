@@ -32,12 +32,15 @@ Refactors never share a change set with a fix or a feature. If the request mixes
 
 **HARD RULE**: a refactor MUST NOT change observable behavior. Request and response shapes, status codes, error types, side effects and their order, transaction scope, event payloads, CLI output, and log or metric names that alerts depend on stay identical. If you cannot show that behavior is preserved, stop and ask.
 
+**HARD RULE (query safety)**: a refactor MUST NOT change how a query is parameterized or drop an owner predicate. Bound values stay bound, allowlisted identifiers stay allowlisted, and every `tenant_id`/`user_id` predicate bound from the authenticated principal survives the move (`<shared>/sql-safety.md` -> The Rules, 1-3). Moving a query into a repository, a helper or a new ORM API is where these get lost.
+
 ## Before You Start
 
-1. Resolve the shared docs folder ("`<shared>`"): first `_shared/` inside this skill's folder (bundled installs, e.g. Claude.ai), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
+1. Resolve the shared docs folder ("`<shared>`"): first `_shared/` inside this skill's folder (bundled installs), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
 2. Read `<shared>/tool-rules.md` (mode=auto contract, Production Targets, Test Integrity, checkpoints) and `<shared>/host-tools.md` if the actions below don't match your host's tool names. Read `<shared>/principles.md` for the target structure, and `<shared>/memory-schema.md` before updating memory.
 3. Load project memory per `<shared>/context-loading.md`: always `project-overview.md` and `tech-stack.md`; `api-patterns.md` for controllers and routes; `db-schema.md` for data access; `decisions.md` when the refactor applies an architectural pattern; `test-strategy.md` for runner conventions. If `project-overview.md` or `tech-stack.md` is missing, run `backend-scan` with `mode=auto` first, or note the gap and discover the layout by finding files and searching file contents.
 4. If the detected stack matches a file in `<shared>/stacks/`, read it.
+5. If the scope touches data-access code (repositories, DAOs, query builders, raw SQL, ORM calls, NoSQL filters), read `<shared>/sql-safety.md` in full.
 
 ## References
 
@@ -97,7 +100,7 @@ Done when: `baseline-results.json` exists, every baseline test in scope passes, 
 
 ### Step 2: Behavior Lock
 
-Write down what must not change for this scope: public signatures, HTTP contracts, error types, return shapes, side-effect order, event emissions, and the implicit contracts that apply (transaction scope, framework proxies such as `@Transactional` self-invocation, DI wiring, query count on hot paths, log and metric names). Checklist: `references/baseline-and-verification.md` -> Implicit-Contract Checklist. Planning only, no code changes.
+Write down what must not change for this scope: public signatures, HTTP contracts, error types, return shapes, side-effect order, event emissions, and the implicit contracts that apply (transaction scope, framework proxies such as `@Transactional` self-invocation, DI wiring, query count on hot paths, log and metric names, and query safety for data-access code: placeholders, identifier allowlists, owner predicates). Checklist: `references/baseline-and-verification.md` -> Implicit-Contract Checklist. Planning only, no code changes.
 
 Done when: the contract list is written into the plan.
 
@@ -138,6 +141,7 @@ Rules:
 - **Retired tests**: tests that cover only code removed under the Deletion rule may be removed in the same confirmed step. First show which tests on the new code cover the same behavior; if none do, add or move tests first. List them as "retired with `<module>`". This is not a Test Integrity exception: a test that fails while its code still exists is never removed or loosened.
 - **Characterization tests** stay until Step 7 passes. Replacing them with cleaner tests is a follow-up for `backend-test`.
 - **Bugs found**: do not fix them here. Log them in `issues.md` for `backend-debug` (Step 8) and keep the characterization test asserting the current behavior.
+- **Unsafe queries found**: a query that already builds SQL from strings with untrusted input, uses an unsafe raw API with input, or lacks an owner predicate is a security bug, not refactor debt. Do not silently fix it inside a behavior-preserving increment, and do not carry it into the new code as if it were fine. Stop that part, report it to the user with `file:line` and severity (`<shared>/sql-safety.md` -> Verification, step 5: Critical if reachable from a public or low-privilege endpoint), log it in `issues.md`, and hand it to `backend-debug`. A Critical finding is raised at once, not only in the Step 8 summary.
 
 Done when: the plan's increments are all applied and the last one is green.
 
@@ -155,6 +159,7 @@ Done when: the step's planned callers route through the new code and the default
 4. No new `any` types, suppressed errors, disabled lint rules, or lint violations.
 5. For API-facing code, run contract or integration tests, or call a representative endpoint on a provably local instance.
 6. Check each implicit-contract item from Step 2.
+7. If data-access code changed, run `<shared>/sql-safety.md` -> Verification steps 1-2 on the changed files: the static search over every changed file, and a full read of every changed repository/DAO file. Compare each moved query with its original: same placeholders, same allowlist, same owner predicate. A query this run made string-built or less scoped is a regression (Step 9); one that was already unsafe goes to `backend-debug` per the Unsafe queries rule in Step 5.
 
 Done when: all checks pass, or a failing check sends you to Step 9. A check that did not run is reported as "not run", never as passed.
 
@@ -162,7 +167,7 @@ Done when: all checks pass, or a failing check sends you to Step 9. A check that
 
 Use `references/memory-updates.md`:
 
-1. Report the summary: pattern, structural changes, files modified, created, and deleted, test results against the baseline, implicit contracts checked, checks not run, and follow-ups.
+1. Report the summary: pattern, structural changes, files modified, created, and deleted, test results against the baseline, implicit contracts checked, query-safety findings with `file:line` and severity (or "none found", or "not run" if Step 7 check 7 did not run), checks not run, and follow-ups.
 2. Append to `project-overview.md` (Structure, Module Boundaries) when the layout or boundaries changed.
 3. Append to `decisions.md` when an architectural pattern was applied or a strangler migration started.
 4. Log bugs and debt found in `issues.md`. Creating an issue in an external tracker needs approval.
@@ -202,7 +207,8 @@ Done when: the code matches the last green state or the run-start state, and the
 - `backend-orchestrator`: routes refactor requests here.
 - `backend-scan`: fills the memory files used as context.
 - `backend-test`: builds the safety net when none exists; replaces characterization tests after verification.
-- `backend-debug`: bugs and behavior changes found or requested during a refactor.
+- `backend-debug`: bugs and behavior changes found or requested during a refactor, including unsafe queries found in scope.
+- `backend-security`: a wider injection or BOLA audit when a refactor turns up more than one unsafe query.
 - `backend-implement`: new features (out of scope here).
 - `backend-architect`: redesigns beyond behavior-preserving refactoring.
 - `backend-doctor`: health check after a refactor.

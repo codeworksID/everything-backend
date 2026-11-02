@@ -22,7 +22,7 @@ Not for:
 
 ## Before You Start
 
-1. Resolve the shared docs folder ("<shared>"): first `_shared/` inside this skill's folder (bundled installs, e.g. Claude.ai), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
+1. Resolve the shared docs folder ("<shared>"): first `_shared/` inside this skill's folder (bundled installs), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
 2. Read `<shared>/tool-rules.md` (mode=auto contract, checkpoints, Command Time Budgets, dependency audit rules) and `<shared>/host-tools.md` if the action names below don't match your host's tools. Read `<shared>/principles.md` -> Security. Read `<shared>/memory-schema.md` -> issues.md before writing findings.
 3. Load project memory per `<shared>/context-loading.md`: `project-overview.md`, `tech-stack.md`, `api-patterns.md` (endpoint inventory, auth method), `db-schema.md` (where PII lives), `decisions.md`, `deployment.md` if present, and `issues.md` (known findings, to avoid duplicates). If memory is missing, continue from the code and say so in the report; suggest `backend-scan` afterwards.
 4. If the detected stack matches a file in `<shared>/stacks/`, read it.
@@ -81,7 +81,7 @@ Work through every item in `references/owasp-api-top10.md`: run its searches, re
 | API9 | Improper Inventory Management |
 | API10 | Unsafe Consumption of APIs |
 
-Also run the "Beyond the Top 10" checks in the same reference (injection, unsafe deserialization, path traversal, uploads, crypto misuse, webhook signatures, open redirects).
+Also run the "Beyond the Top 10" checks in the same reference (injection, unsafe deserialization, path traversal, uploads, crypto misuse, webhook signatures, open redirects). Injection follows `<shared>/sql-safety.md` in full via the reference's "Injection Review" (rules 1-12, second-order, Verification); string-built SQL or a missing owner predicate on a public or low-privilege route is Critical.
 
 Rules:
 - A search hit is a lead, not a finding. Read the handler and its middleware before calling it a finding.

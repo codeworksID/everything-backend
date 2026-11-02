@@ -27,6 +27,10 @@ Every auth change ships with these tests where the feature applies. Each must fa
 | Tenancy | Tenant A principal accesses tenant B resource by ID | 404 |
 | Tenancy | Client sends another `tenant_id` in body, query, or header | ignored or 403 |
 | Tenancy | Tenant B rows absent from tenant A list endpoints | no leakage |
+| Tenancy | Tenant A principal updates or deletes tenant B's row by ID | 404, and tenant B's row count and values unchanged |
+| Injection | Hostile id, filter, sort, or search values on an owner-scoped endpoint (payload list in `<shared>/sql-safety.md` -> Verification, item 4) | 400 or own-tenant rows only; never extra rows, a 500, or a changed row count |
+| Injection | Login or reset body with an operator object or array where a string is expected (`{"email": "a@b.c", "password": {"$ne": null}}`) | 400, never a session |
+| Injection | Login email `' OR '1'='1' --` | same 401 as a wrong password |
 | Mass assignment | Client sets `role` / `tenant_id` / `is_admin` in an update body | field ignored or 400 |
 | Credentials | Wrong password and unknown user return identical status and body | same response |
 | Credentials | Password shorter than policy, or on the breached list | 400 / 422 |
@@ -36,6 +40,8 @@ Every auth change ships with these tests where the feature applies. Each must fa
 | Headers | Token endpoint response | has `Cache-Control: no-store` |
 
 Positive tests too: valid token passes, correct role passes, owner can access own resource.
+
+The Injection and cross-tenant rows apply `<shared>/sql-safety.md` -> Verification, item 4 to auth. Run them against every endpoint that takes an id, filter, sort, or free-text parameter on tenant- or user-owned data, not just the auth routes.
 
 ## Review Checklist (review mode)
 
@@ -51,10 +57,11 @@ Inspect code and config, and record evidence (file:line) for each item:
 8. Login, signup, and reset do not enumerate accounts.
 9. Rate limiting on auth endpoints with a shared store and trusted-proxy IP resolution.
 10. Ownership and tenant checks in services; `tenant_id` only from the principal; RLS session handling safe on pools.
-11. DTO field allowlists prevent setting roles or tenant.
-12. CORS allowlist; auth responses `no-store`; HSTS.
-13. Audit logs for auth events without secrets.
-14. Existing tests cover the negative matrix above.
+11. Every by-id read, update, and delete on tenant- or user-owned data binds the owner predicate from the principal in the same statement, with bound parameters (`<shared>/sql-safety.md` -> The Rules, rules 1 and 3). Read every repository/DAO file the auth gate relies on; record each query without the predicate.
+12. DTO field allowlists prevent setting roles or tenant.
+13. CORS allowlist; auth responses `no-store`; HSTS.
+14. Audit logs for auth events without secrets.
+15. Existing tests cover the negative matrix above.
 
 ## Finding Format
 
@@ -70,7 +77,7 @@ Use the same shape as `backend-doctor` so findings merge cleanly:
 - **Next skill**: backend-auth | backend-implement | backend-migrate | backend-test
 ```
 
-Severity: **Critical** = auth bypass, forged tokens accepted, cross-tenant access, secrets exposed. **High** = missing ownership check, no CSRF on cookie auth, no rate limit on login, weak hashing. **Medium** = missing timeouts, missing `no-store`, enumeration. **Low** = hardening and hygiene.
+Severity: **Critical** = auth bypass, forged tokens accepted, cross-tenant access, secrets exposed, or a query without the owner predicate or built from strings with untrusted input that a public or low-privilege endpoint reaches (`<shared>/sql-safety.md` -> Verification, item 5). **High** = missing ownership check, no CSRF on cookie auth, no rate limit on login, weak hashing. **Medium** = missing timeouts, missing `no-store`, enumeration. **Low** = hardening and hygiene.
 
 ## Design Document Template
 

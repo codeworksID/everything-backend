@@ -14,7 +14,7 @@ scalar DateTime
 type Query {
   me: User
   user(id: ID!): User
-  users(first: Int = 20, after: String, filter: UserFilter): UserConnection!
+  users(first: Int = 20, after: String, filter: UserFilter, orderBy: UserOrder): UserConnection!
 }
 
 type Mutation {
@@ -39,8 +39,29 @@ type Post {
 }
 
 input UserFilter {
-  nameContains: String
+  nameContains: String   # server enforces maxLength 100, escapes % and _
   createdAfter: DateTime
+  status: UserStatus
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum UserOrderField {
+  CREATED_AT
+  NAME
+}
+
+enum OrderDirection {
+  ASC
+  DESC
+}
+
+input UserOrder {
+  field: UserOrderField! = CREATED_AT
+  direction: OrderDirection! = DESC
 }
 
 type PageInfo {
@@ -122,7 +143,9 @@ type DeleteUserPayload {
 A single GraphQL request can be very expensive. Define in the contract:
 
 - Maximum query depth (for example 10) and a query cost or complexity limit, with list fields costed by their `first` argument.
-- Maximum page size on every connection.
+- Maximum page size on every connection (reject `first` above it).
+- Sort fields and directions are GraphQL enums; filters are typed input fields. Never a `String` that holds a column name, an ORDER BY, a `where` expression or a JSON query (`_shared/sql-safety.md` rules 2, 9). String inputs used in search have a documented max length that resolvers enforce (GraphQL has no built-in length constraint). Resolvers map enum values to fixed columns.
+- `ID` is opaque in GraphQL; resolvers validate its shape (UUID or integer) and return a validation error before querying.
 - Introspection: disable or restrict in production for private APIs; keep it on for public APIs that publish their schema.
 - Persisted queries (an allowlist of known operations) for first-party clients when possible.
 - Limit aliases and batched operations per request.

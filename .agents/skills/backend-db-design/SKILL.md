@@ -20,7 +20,7 @@ Not for: writing or applying migration files (`backend-migrate`), changing exist
 
 ## Before You Start
 
-1. Resolve the shared docs folder ("<shared>"): first `_shared/` inside this skill's folder (bundled installs, e.g. Claude.ai), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
+1. Resolve the shared docs folder ("<shared>"): first `_shared/` inside this skill's folder (bundled installs), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
 2. Read `<shared>/tool-rules.md` (mode=auto contract, checkpoints), `<shared>/principles.md` (Database and Security sections) and `<shared>/memory-schema.md` (db-schema.md and decisions.md formats). Read `<shared>/host-tools.md` if the actions below don't map clearly to your host's tools.
 3. Load project memory per `<shared>/context-loading.md`: always `project-overview.md`, `tech-stack.md`, `db-schema.md` and `decisions.md`; `api-patterns.md` only if the design touches endpoints. If memory is missing or stale, suggest `backend-scan` and continue from the live code; create `db-schema.md` from the schema in `<shared>/memory-schema.md` when you save the design.
 4. If the detected stack matches a file in `<shared>/stacks/`, read it (for PostgreSQL: `<shared>/stacks/postgres.md`).
@@ -79,6 +79,7 @@ Apply these rules (details in `references/relational-rules.md`):
 - Classify personal and sensitive columns and set retention.
 - Identity, credentials and roles: defer to `backend-auth` and include the tables it asks for. Do not design a single role column here.
 - Multi-tenant data: follow `references/multi-tenancy.md` and record the tenancy model in `decisions.md`.
+- Database-side defenses, per `references/database-security.md`: a migration role that owns the objects and an application role with DML only (no DDL, no `SUPERUSER`/`BYPASSRLS`, no file or program privileges), `statement_timeout` per role, RLS on tenant-owned tables as a second layer, and `SECURITY DEFINER` functions with a fixed `search_path`. These back up `<shared>/sql-safety.md` (rules 8 and 11); they never replace bound parameters or the owner predicate in every query (rule 3).
 
 Use `references/schema-templates.md` for the canonical PostgreSQL, MySQL and MongoDB examples and the ORM schema mapping. Use `references/domain-patterns.md` when the feature is a common domain (users, content, e-commerce, messaging, audit).
 
@@ -89,6 +90,7 @@ Output: target DDL (or ORM schema, or collection validators) for every new or ch
 1. Normalization: every column atomic; no partial or transitive dependencies; M:N resolved with junction tables; derived data stored only with a measured reason and a correctness mechanism.
 2. Indexes: each index names the query it serves; composite order is equality first, then range or sort; no duplicate of a unique constraint; no speculative indexes.
 3. Critical write flows: transaction boundary, side effects after commit (outbox, owned by `backend-ops`), concurrency strategy (unique constraint, version column, row lock or idempotency key).
+4. Security: every tenant- or user-owned table has the owner column the queries will bind; grants, role timeouts, RLS policies and functions follow `references/database-security.md`.
 
 Fill the tables in `references/review-templates.md`.
 
@@ -111,7 +113,7 @@ Produce a plan, not migration files. One row per schema change:
 - **Data movement**: backfills or transforms; note the PK type so migrate can batch by key.
 - **Depends on**: parents before children; expand before the code switch; contract in a later release.
 - **Rollback intent**: how each change is reversed, or why it cannot be (drops lose data).
-- Also note: the migration tool and naming convention found in Step 1, raw-SQL steps the ORM cannot express (partial indexes, triggers, RLS), and whether target tables are large or hot.
+- Also note: the migration tool and naming convention found in Step 1, raw-SQL steps the ORM cannot express (partial indexes, triggers, RLS, grants, role settings, functions), and whether target tables are large or hot. Role creation and credentials are an infrastructure step for `backend-deploy`.
 
 `backend-migrate` writes the files with the project's tool, applies its lock-safe and expand/contract rules (dual-write, safe `NOT NULL`, `lock_timeout`, `CONCURRENTLY`), and applies migrations only after Always Ask First (`<shared>/tool-rules.md`).
 
@@ -154,6 +156,7 @@ In `mode=interactive`, show each memory diff and wait for approval before writin
 
 - Every confirmed entity has a table or collection with keys, constraints and justified indexes.
 - Every FK has an explicit `ON DELETE` choice; every index names its query.
+- The application role is least-privilege with a `statement_timeout`, and tenant-owned tables have RLS (PostgreSQL) or a recorded reason why not.
 - The migration plan covers every change, with order, kind and rollback intent.
 - The user approved the design (or `mode=auto` had no blocking question).
 - `db-schema.md` and `decisions.md` are updated, the checkpoint is closed, and the handoff to `backend-migrate` is stated.
@@ -173,6 +176,7 @@ In `mode=interactive`, show each memory diff and wait for approval before writin
 - `references/relational-rules.md`: read in Step 4 for keys, columns, case and Unicode, FKs, soft delete, money, concurrency columns, sensitive data, audit and outbox tables.
 - `references/schema-templates.md`: read when writing the target schema; canonical PostgreSQL, MySQL and MongoDB examples and the ORM mapping.
 - `references/multi-tenancy.md`: read when data belongs to tenants (SaaS, organizations, workspaces).
+- `references/database-security.md`: read in Steps 4, 5 and 7 for application vs migration roles, grants, per-role timeouts, RLS as defense in depth, `SECURITY DEFINER` functions and in-database dynamic SQL.
 - `references/domain-patterns.md`: read when the feature is users, content, e-commerce, messaging, audit or another common domain.
 - `references/review-templates.md`: read in Steps 5 and 8 for the normalization, index, key and transaction tables.
 - `references/erd.md`: read in Step 6 for ERD rules and the template.

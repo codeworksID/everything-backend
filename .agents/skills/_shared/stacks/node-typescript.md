@@ -276,7 +276,81 @@ CMD ["node", "dist/server.js"]
 - Migrations run as a separate, gated pipeline step (`prisma migrate deploy` / `drizzle-kit migrate` in a release job), not in the container `CMD`. See `backend-deploy`.
 - Building and pushing images is the user's call: `docker build` locally runs without asking; `docker push` is Always Ask First.
 
-## 15. Common Anti-Patterns
+## 15. Data Access Safety
+
+Injection-proof data access is mandatory. The rules, the safe/unsafe API table for pg, mysql2, Prisma, Drizzle, Knex, Sequelize and TypeORM, and the required verification are in `_shared/sql-safety.md`; this section only shows the Node forms. The owner (`ctx.tenantId`, `ctx.userId`) always comes from the verified token or session, never from `req.body`, `req.params` or `req.query`.
+
+```ts
+// users.schemas.ts: validation is defense in depth, not the fix
+export const ListOrdersQuery = z.object({
+  sort: z.enum(["created", "total"]).default("created"),
+  dir: z.enum(["asc", "desc"]).default("desc"),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  search: z.string().trim().max(100).optional(),
+});
+
+// orders.repo.ts
+const SORT_FIELD = { created: "createdAt", total: "totalCents" } as const; // server-side allowlist
+
+export function getOrder(ctx: AuthCtx, id: string) {
+  return prisma.order.findFirst({ where: { id, tenantId: ctx.tenantId } }); // null -> 404
+}
+
+export async function setOrderStatus(ctx: AuthCtx, id: string, status: OrderStatus) {
+  const { count } = await prisma.order.updateMany({
+    where: { id, tenantId: ctx.tenantId },          // key + owner: bounded write
+    data: { status },                               // explicit fields, never ...req.body
+  });
+  if (count === 0) throw new AppError(404, "NOT_FOUND", "Order not found");
+}
+
+export function listOrders(ctx: AuthCtx, q: z.infer<typeof ListOrdersQuery>) {
+  return prisma.order.findMany({
+    where: { tenantId: ctx.tenantId },
+    orderBy: { [SORT_FIELD[q.sort]]: q.dir },       // never orderBy: req.query.sort
+    take: q.limit,
+  });
+}
+```
+
+Raw SQL, when the query builder cannot express it:
+
+```ts
+// Prisma: every ${} in $queryRaw is a bound parameter; identifiers are constant Prisma.sql fragments.
+const ORDER_BY = { created: Prisma.sql`created_at`, total: Prisma.sql`total_cents` } as const;
+const DIR = { asc: Prisma.sql`ASC`, desc: Prisma.sql`DESC` } as const;
+if (ids.length === 0 || ids.length > 100) throw new AppError(400, "BAD_IDS", "1-100 ids");
+const rows = await prisma.$queryRaw<OrderRow[]>`
+  SELECT id, status FROM orders
+  WHERE tenant_id = ${ctx.tenantId} AND id IN (${Prisma.join(ids)})
+  ORDER BY ${ORDER_BY[q.sort]} ${DIR[q.dir]}
+  LIMIT ${q.limit}`;
+
+// node-postgres: placeholders + values array; lists as one array parameter
+await pool.query(
+  "SELECT id, status FROM orders WHERE tenant_id = $1 AND id = ANY($2::bigint[])",
+  [ctx.tenantId, ids],
+);
+
+// LIKE search: escape \ % _ in the term, then bind the pattern (Postgres and MySQL default escape is \)
+const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => "\\" + c);
+const term = q.search ?? "";
+db.select().from(customers).where(and(
+  eq(customers.tenantId, ctx.tenantId),
+  ilike(customers.name, `%${escapeLike(term)}%`),   // Drizzle binds the pattern as a parameter
+));
+
+// Knex: column from the allowlist, values bound
+const SORT_COLUMN = { created: "created_at", total: "total_cents" } as const;
+knex("orders").where({ tenant_id: ctx.tenantId }).orderBy(SORT_COLUMN[q.sort], q.dir).limit(q.limit);
+```
+
+- mysql2: prefer `execute` (server-side prepared) and keep `multipleStatements` unset (default `false`).
+- MongoDB/Mongoose: `mongoose.set("sanitizeFilter", true)` and `mongoose.set("strictQuery", true)`; validate scalars with zod (`z.string()`) so `{"$ne": null}` is rejected with 400; never `$where` or `$function` with input.
+- Map ORM and driver errors (Prisma `P2002`, `P2025`, pg error codes) to `AppError`; never return the driver message.
+- Before reporting done, run `_shared/sql-safety.md` -> Verification (static search, read every changed `*.repo.ts`, semgrep, negative tests with hostile payloads in supertest or `app.inject`).
+
+## 16. Common Anti-Patterns
 
 - `process.env.X` scattered through the code instead of one validated `env` module.
 - `prisma db push` or `drizzle-kit push` used as the production migration path; TypeORM `synchronize: true` in any shared environment.
@@ -285,7 +359,9 @@ CMD ["node", "dist/server.js"]
 - `jwt.decode` / `jose.decodeJwt` used as if it verified the token; `verify` without `algorithms`.
 - Returning ORM entities directly (leaks hashes, internal flags); spreading `req.body` into `create`/`update`.
 - N+1 queries from lazy loops; use `include`/`with`, joins or batching (DataLoader).
-- Raw SQL built with string concatenation; use tagged templates (``prisma.$queryRaw`...` ``, Drizzle ``sql`...` ``), never `$queryRawUnsafe` with user input.
+- SQL built from strings: template literals or `+` into `pool.query`, `knex.raw`, `whereRaw`, `orderByRaw`, `sequelize.query` or TypeORM `.where()`; `$queryRawUnsafe`, `$executeRawUnsafe`, `Prisma.raw(input)`, `sql.raw(input)` or `sequelize.literal(input)` with user input. Use tagged templates and bound parameters (section 15, `_shared/sql-safety.md`).
+- `orderBy` / column names taken straight from `req.query`; map them through a server-side allowlist.
+- Lookups by id alone (`findUnique({ where: { id } })`, `update({ where: { id } })`) on tenant- or user-owned rows; add the owner from the authenticated principal (BOLA).
 - Blocking the event loop: sync `fs`/`crypto` in handlers, large `JSON.parse` on hot paths, CPU work without a worker thread.
 - No timeout on outbound HTTP (`fetch` with `AbortSignal.timeout(ms)`), DB pool or queue calls.
 - `console.log` logging, logging tokens or full request bodies.

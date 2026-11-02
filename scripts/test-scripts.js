@@ -121,28 +121,176 @@ const cases = [
 
   // destructive SQL
   ['psql -c "select 1"', "allow", null, B],
-  ['psql -c "DELETE FROM users"', "ask", "destructive-sql", B],
-  ['psql -c "DELETE FROM users WHERE id = 5"', "allow", null, B],
-  ['psql "$DATABASE_URL" -c "UPDATE users SET admin = true"', "ask", "destructive-sql", B],
-  ['psql -c "UPDATE users SET admin = true WHERE id = 1"', "allow", null, B],
+  ['psql -c "DELETE FROM users"', "ask", "database-write", B],
+  ['psql -c "DELETE FROM users WHERE id = 5"', "ask", "database-write", B],
+  ['psql "$DATABASE_URL" -c "UPDATE users SET admin = true"', "ask", "database-write", B],
+  ['psql -c "UPDATE users SET admin = true WHERE id = 1"', "ask", "database-write", B],
+  // A WHERE clause never makes a write safe; only plain reads are allowed.
+  ['psql -c "DELETE FROM users WHERE 1=1"', "ask", "database-write", B],
+  [`psql -c "UPDATE users SET role = 'admin' WHERE email = 'a@b.c' OR 1=1"`, "ask", "database-write", B],
+  [`psql -c "INSERT INTO users(email) VALUES ('x')"`, "ask", "database-write", B],
+  ['mysql -e "REPLACE INTO kv VALUES (1, 2)"', "ask", "database-write", B],
+  ['psql -c "MERGE INTO t USING s ON t.id = s.id WHEN MATCHED THEN DELETE"', "ask", "database-write", B],
+  ['psql -c "GRANT ALL ON users TO public"', "ask", "database-write", B],
+  [`psql -c "COPY users FROM '/tmp/u.csv'"`, "ask", "database-write", B],
+  ['psql -c "CREATE INDEX CONCURRENTLY i ON t(x)"', "ask", "database-write", B],
+  ['psql -c "VACUUM FULL users"', "ask", "database-write", B],
+  ['psql -c "CALL purge_old_rows()"', "ask", "database-write", B],
+  ['psql -c "DO $$ BEGIN DELETE FROM t; END $$"', "ask", "database-write", B],
+  ['psql -c "SELECT 1; DELETE FROM users WHERE id = 1"', "ask", "database-write", B],
+  ['psql -c "WITH d AS (DELETE FROM users WHERE id = 1 RETURNING *) SELECT * FROM d"', "ask", "database-write", B],
+  ['psql -c "SELECT * INTO backup_users FROM users"', "ask", "database-write", B],
+  ['psql -c "SELECT pg_terminate_backend(123)"', "ask", "database-write", B],
+  [`psql -c "SELECT setval('users_id_seq', 1)"`, "ask", "database-write", B],
+  ['psql -c "EXPLAIN ANALYZE DELETE FROM users WHERE id = 1"', "ask", "database-write", B],
+  ['psql -c "EXPLAIN DELETE FROM users WHERE id = 1"', "allow", null, B],
+  ['psql -c "EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM users WHERE id = 1"', "allow", null, B],
+  ['psql -c "\\i seed.sql"', "ask", "database-write", B],
+  ['psql -c "\\dt"', "allow", null, B],
+  [`psql -c "SELECT id FROM users WHERE email = 'delete@x.io' FOR UPDATE"`, "allow", null, B],
+  ['psql -c "SHOW search_path"', "allow", null, B],
+  ['psql -c "BEGIN; SELECT 1; COMMIT"', "allow", null, B],
+  [`mysql -e "SELECT * FROM users INTO OUTFILE '/tmp/u'"`, "ask", "database-write", B],
+  ['mysql -e "SET GLOBAL max_connections = 1"', "ask", "database-write", B],
+  ['mysql -e "SET NAMES utf8mb4"', "allow", null, B],
+  ['sqlite3 app.db ".import users.csv users"', "ask", "database-write", B],
+  ['sqlite3 app.db "PRAGMA journal_mode = DELETE"', "ask", "database-write", B],
+  ['sqlite3 app.db "PRAGMA table_info(users)"', "allow", null, B],
+  ['mongosh --eval "db.users.updateOne({_id: 1}, {$set: {admin: true}})"', "ask", "database-write", B],
+  [`mongosh --eval "db.orders.aggregate([{$match: {}}, {$out: 'copy'}])"`, "ask", "database-write", B],
+  ['mongosh --eval "db.users.countDocuments({})"', "allow", null, B],
+  ["redis-cli DEL session:1", "ask", "database-write", B],
+  ["redis-cli -h localhost -p 6379 SET k v", "ask", "database-write", B],
+  ["redis-cli GET k", "allow", null, B],
+  ["redis-cli --scan --pattern 'user:*'", "allow", null, B],
+  ["redis-cli CONFIG SET maxmemory 1mb", "ask", "database-write", B],
+  ["redis-cli CONFIG GET maxmemory", "allow", null, B],
+  ["redis-cli < commands.txt", "ask", "database-write", B],
   ['psql -c "SELECT * FROM jobs FOR UPDATE SKIP LOCKED"', "allow", null, B],
-  ["psql -c 'DROP TABLE users'", "ask", "destructive-sql", B],
+  ["psql -c 'DROP TABLE users'", "ask", "database-write", B],
   ['psql -c "-- DROP TABLE users\nSELECT 1"', "allow", null, B],
   ["psql -c \"SELECT 'drop table x'\"", "allow", null, B],
-  ['mysql -u root -e "TRUNCATE orders"', "ask", "destructive-sql", B],
-  ['mysql -e "ALTER TABLE users ADD COLUMN x int"', "ask", "destructive-sql", B],
-  ['sqlite3 app.db "DELETE FROM sessions"', "ask", "destructive-sql", B],
+  ['mysql -u root -e "TRUNCATE orders"', "ask", "database-write", B],
+  ['mysql -e "ALTER TABLE users ADD COLUMN x int"', "ask", "database-write", B],
+  ['sqlite3 app.db "DELETE FROM sessions"', "ask", "database-write", B],
   ['sqlite3 app.db ".tables"', "allow", null, B],
-  ['mongosh mongodb://localhost/app --eval "db.users.drop()"', "ask", "destructive-sql", B],
+  ['mongosh mongodb://localhost/app --eval "db.users.drop()"', "ask", "database-write", B],
   ['mongosh --eval "db.users.find().limit(1)"', "allow", null, B],
-  ["psql -f migrations/001.sql", "ask", "destructive-sql", B],
-  ["psql < dump.sql", "ask", "destructive-sql", B],
-  ['echo "DROP DATABASE app" | psql', "ask", "destructive-sql", B],
-  ["psql $DB <<EOF\nDELETE FROM users;\nEOF", "ask", "destructive-sql", B],
+  ["psql -f migrations/001.sql", "ask", "database-write", B],
+  ["psql < dump.sql", "ask", "database-write", B],
+  ['echo "DROP DATABASE app" | psql', "ask", "database-write", B],
+  ["psql $DB <<EOF\nDELETE FROM users;\nEOF", "ask", "database-write", B],
   ["psql $DB <<'SQL'\nSELECT count(*) FROM users;\nSQL\necho done", "allow", null, B],
-  ["sudo -u postgres psql -c 'DROP DATABASE app'", "ask", "destructive-sql", B],
-  ['docker compose exec db psql -U app -c "TRUNCATE events"', "ask", "destructive-sql", B],
-  ["redis-cli FLUSHALL", "ask", "destructive-sql", B],
+  ["sudo -u postgres psql -c 'DROP DATABASE app'", "ask", "database-write", B],
+  ['docker compose exec db psql -U app -c "TRUNCATE events"', "ask", "database-write", B],
+  ["redis-cli FLUSHALL", "ask", "database-write", B],
+
+  // SQL bypass review: quotes, comments and escapes that hid a write from the old regex stripper
+  [`psql -c "SELECT '/*'; DELETE FROM t; SELECT '*/'"`, "ask", "database-write", B],
+  [`psql -c "SELECT '--'; DELETE FROM t"`, "ask", "database-write", B],
+  [`psql -c "/* /* */ ' */ DELETE FROM t; -- '"`, "ask", "database-write", B],
+  [`psql -c "SELECT '\\'; DELETE FROM t; --'"`, "ask", "database-write", B],
+  [`psql -c "SELECT E'\\''; DELETE FROM t; --'"`, "ask", "database-write", B],
+  ["psql -c 'SELECT $x$ ; $x$; DELETE FROM t'", "ask", "database-write", B],
+  ["psql -c \"SELECT 1;\nDELETE\nFROM t\"", "ask", "database-write", B],
+  [`mysql -e "SELECT 1 # '\nDELETE FROM t; -- '"`, "ask", "database-write", B],
+  [`mysql -e "SELECT 1 /*! ; DELETE FROM t */"`, "ask", "database-write", B],
+  [`mysql -e 'SELECT "a\\"" ; DELETE FROM t; -- "'`, "ask", "database-write", B],
+  ["mysql -e 'SELECT 1 a$$; DELETE FROM t; SELECT 1 b$$'", "ask", "database-write", B],
+  [`mysql -e "SELECT 1 --1; DELETE FROM t"`, "ask", "database-write", B],
+  [`sqlite3 app.db "SELECT [a'b]; DELETE FROM t; --'"`, "ask", "database-write", B],
+  [`sqlite3 app.db "#'\nDELETE FROM t;\n'"`, "ask", "database-write", B],
+  // option bundles, abbreviations and other ways to pass SQL
+  ['psql -tAc "DELETE FROM users"', "ask", "database-write", B],
+  ['psql -Xqc "DROP TABLE users"', "ask", "database-write", B],
+  ['psql --comm="DELETE FROM t"', "ask", "database-write", B],
+  ['mysql --exec="DELETE FROM t"', "ask", "database-write", B],
+  ['mysql --init-command="DELETE FROM t" -e "SELECT 1"', "ask", "database-write", B],
+  ['clickhouse client -q "DROP TABLE x"', "ask", "database-write", B],
+  ['duckdb app.db -s "DROP TABLE x"', "ask", "database-write", B],
+  ['Invoke-Sqlcmd "DROP TABLE x"', "ask", "database-write", PS],
+  ['Invoke-Sqlcmd -Query:"DROP TABLE x"', "ask", "database-write", PS],
+  ['sqlcmd /Q "DROP TABLE t"', "ask", "database-write", B],
+  // T-SQL batches need no ";" between statements
+  ['sqlcmd -Q "BEGIN DELETE FROM t END"', "ask", "database-write", B],
+  ['sqlcmd -Q "SELECT 1 DROP TABLE t"', "ask", "database-write", B],
+  ["sqlcmd -Q \"SELECT 1\nGO\nsp_rename 'a','b'\"", "ask", "database-write", B],
+  ["sqlcmd -c FOO -Q \"SELECT 1\nFOO\nsp_rename 'a','b'\"", "ask", "database-write", B],
+  ['sqlcmd -Q "SELECT 1\n:r evil.sql"', "ask", "database-write", B],
+  ['sqlcmd -Q "SELECT 1\n!! del x"', "ask", "database-write", B],
+  ["Invoke-Sqlcmd -Query 'SELECT $(v)' -Variable 'v=1 DROP TABLE t'", "ask", "database-write", PS],
+  ["sqlcmd -Q \"SELECT * FROM OPENQUERY(srv, 'DELETE FROM t')\"", "ask", "database-write", B],
+  // reads that write
+  ['psql -c "WITH a AS (SELECT 1) SELECT * INTO newt FROM a"', "ask", "database-write", B],
+  ['psql -c "EXPLAIN ANALYZE SELECT * INTO x FROM t"', "ask", "database-write", B],
+  ['mysql -e "DESCRIBE ANALYZE DELETE t FROM t JOIN u ON t.id = u.id"', "ask", "database-write", B],
+  ["psql -c 'SELECT \"nextval\"(1)'", "ask", "database-write", B],
+  ["psql -c \"SELECT query_to_xml('DELETE FROM t RETURNING 1', true, true, '')\"", "ask", "database-write", B],
+  ["psql -c \"SELECT dblink_send_query('c', 'DELETE FROM t')\"", "ask", "database-write", B],
+  ['psql -c "SELECT pg_try_advisory_lock(1)"', "ask", "database-write", B],
+  ["psql -c \"SELECT pg_notify('c', 'x')\"", "ask", "database-write", B],
+  ["sqlite3 app.db \"SELECT writefile('/tmp/x', 'y')\"", "ask", "database-write", B],
+  ["sqlite3 app.db \"SELECT load_extension('evil')\"", "ask", "database-write", B],
+  ['mysql -e "SELECT NEXT VALUE FOR s"', "ask", "database-write", B],
+  ["psql -c \"COMMIT PREPARED 'x'\"", "ask", "database-write", B],
+  ["mysql -e \"SET sql_mode = '', GLOBAL max_connections = 1\"", "ask", "database-write", B],
+  ["mysql -e \"SET PASSWORD = 'x'\"", "ask", "database-write", B],
+  ['sqlite3 app.db "PRAGMA user_version(5)"', "ask", "database-write", B],
+  // client meta-commands
+  ['psql -c "SELECT 1 \\gx |rm -rf ~"', "ask", "database-write", B],
+  ["psql <<EOF\n\\x\nDELETE FROM users;\nEOF", "ask", "database-write", B],
+  ["psql -c '\\set x `rm -rf ~`'", "ask", "database-write", B],
+  ["psql -v q='1; DELETE FROM users' -c 'SELECT :q'", "ask", "database-write", B],
+  ['mysql -e "SELECT 1\\! rm -rf ~"', "ask", "database-write", B],
+  ['mysql -e "SELECT 1; \\. evil.sql"', "ask", "database-write", B],
+  ['sqlite3 app.db ".tables\n.shell rm -rf ~"', "ask", "database-write", B],
+  ['sqlite3 app.db ".tables" ".shell rm -rf ~"', "ask", "database-write", B],
+  ['sqlite3 app.db ".timer on\nDELETE FROM t;"', "ask", "database-write", B],
+  ["sqlite3 -A -cf ar.db x", "ask", "database-write", B],
+  // shell values the guard cannot see, and stdin through wrappers
+  ['psql -c "SELECT * FROM users WHERE id = $ID"', "ask", "database-write", B],
+  ["psql <<EOF\nSELECT * FROM t WHERE id = $ID;\nEOF", "ask", "database-write", B],
+  ["docker exec -i db psql -U app < dump.sql", "ask", "database-write", B],
+  ['echo "DROP TABLE x" | docker exec -i db psql', "ask", "database-write", B],
+  ["docker exec -i db psql <<EOF\nDELETE FROM t;\nEOF", "ask", "database-write", B],
+  ["ssh db 'psql app' < dump.sql", "ask", "database-write", B],
+  ["cat <<EOF | psql\nDELETE FROM t;\nEOF", "ask", "database-write", B],
+  ['@"\nDELETE FROM t\n"@ | psql', "ask", "database-write", PS],
+  // MongoDB, Redis and database tools
+  ["mongosh --eval \"db.users['deleteMany']({})\"", "ask", "database-write", B],
+  ["mongosh --eval 'const p = [{$out: \"x\"}]; db.c.aggregate(p)'", "ask", "database-write", B],
+  ["mongosh --eval \"require('child_process').execSync('id')\"", "ask", "database-write", B],
+  ['mongosh --eval "const f = db.users.deleteMany; f({})"', "ask", "database-write", B],
+  ["redis-cli --askpass FLUSHALL", "ask", "database-write", B],
+  ["echo FLUSHALL | redis-cli", "ask", "database-write", B],
+  ["mysqladmin -u root shutdown", "ask", "database-write", B],
+  ["createdb app", "ask", "database-write", B],
+  ["mongorestore --drop dump/", "ask", "database-write", B],
+  ["pgbench -i app", "ask", "database-write", B],
+  // everyday reads stay allowed
+  ['psql -tAc "SELECT 1"', "allow", null, B],
+  ['psql -c "SELECT count(*), now(), lower(name), coalesce(a, b) FROM users"', "allow", null, B],
+  ["psql -c \"SELECT data->>'x', jsonb_build_object('a', 1), x::int FROM t\"", "allow", null, B],
+  ['psql -c "(SELECT 1) UNION (SELECT 2)"', "allow", null, B],
+  ["psql -c 'SELECT $$a;b$$'", "allow", null, B],
+  ["psql <<'SQL'\n\\x\nSELECT 1;\n\\dt\nSQL", "allow", null, B],
+  ['psql -c "\\d+ users"', "allow", null, B],
+  ["mysql -e \"SELECT REPLACE(name, 'a', 'b'), TRUNCATE(price, 2), INSERT('abc', 1, 1, 'x') FROM t\"", "allow", null, B],
+  ['mysql -e "SELECT * FROM t LOCK IN SHARE MODE"', "allow", null, B],
+  ['mysql -e "SELECT * FROM t\\G"', "allow", null, B],
+  ['mysql -Ne "SELECT 1"', "allow", null, B],
+  ['mysql -e "USE app; SHOW CREATE TABLE users"', "allow", null, B],
+  ['mysql -e "SELECT id INTO @x FROM t LIMIT 1"', "allow", null, B],
+  ['sqlite3 app.db ".headers on" ".mode column" "SELECT * FROM t LIMIT 5"', "allow", null, B],
+  ['sqlite3 app.db "PRAGMA foreign_key_check(users)"', "allow", null, B],
+  ['sqlcmd -S . -Q "SELECT TOP 5 * FROM dbo.Users"', "allow", null, B],
+  ['Invoke-Sqlcmd -ServerInstance . -Query "SELECT 1"', "allow", null, PS],
+  ['echo "SELECT 1" | psql', "allow", null, B],
+  ["cat <<EOF | psql\nSELECT 1;\nEOF", "allow", null, B],
+  ['clickhouse client -q "SELECT 1"', "allow", null, B],
+  ["mongosh --eval 'db.users.aggregate([{$match: {a: 1}}, {$group: {_id: \"$b\", n: {$sum: 1}}}])'", "allow", null, B],
+  ["redis-cli CLIENT LIST", "allow", null, B],
+  ["mysqladmin -u root -p status", "allow", null, B],
 
   // deploy and infra
   ["kubectl apply -f k8s/", "ask", "deploy-infra", B],
@@ -193,10 +341,12 @@ const cases = [
   ["pulumi -C infra up", "ask", "deploy-infra", B],
   ["pulumi -C infra preview", "allow", null, B],
   // database-level destructive tools
-  ["dropdb app_dev", "ask", "destructive-sql", B],
-  ["mysqladmin -u root drop app", "ask", "destructive-sql", B],
-  ["pg_restore --clean -d app backup.dump", "ask", "destructive-sql", B],
-  ["pg_restore -Fc -d app backup.dump", "allow", null, B],
+  ["dropdb app_dev", "ask", "database-write", B],
+  ["mysqladmin -u root drop app", "ask", "database-write", B],
+  ["pg_restore --clean -d app backup.dump", "ask", "database-write", B],
+  ["pg_restore -Fc -d app backup.dump", "ask", "database-write", B],
+  ["pg_restore -f out.sql backup.dump", "allow", null, B],
+  ["pg_restore -l backup.dump", "allow", null, B],
   // branch resets
   ["git checkout -B main origin/main", "ask", "git-history", B],
   ["git switch -C feat", "ask", "git-history", B],
@@ -228,7 +378,7 @@ const cases = [
   ["& git checkout -- src/app.ts", "ask", "git-history", PS],
   ["npx prisma migrate deploy; Write-Host done", "ask", "migration", PS],
   ["Get-Content .\\log.txt | Select-String error", "allow", null, PS],
-  ['Invoke-Sqlcmd -Query "DROP TABLE dbo.Users"', "ask", "destructive-sql", PS],
+  ['Invoke-Sqlcmd -Query "DROP TABLE dbo.Users"', "ask", "database-write", PS],
 
   // strict mode
   ["git commit -m 'feat: x'", "ask", "git-write", STRICT],
@@ -285,7 +435,7 @@ const cases = [
 test("guard: categories are exported", () => {
   assert.ok(Array.isArray(guard.CATEGORIES));
   const ids = guard.CATEGORIES.map((c) => c.id);
-  for (const id of ["git-history", "migration", "destructive-sql", "deploy-infra", "recursive-delete", "git-write", "dependency-change", "remote-script"]) {
+  for (const id of ["git-history", "migration", "database-write", "deploy-infra", "recursive-delete", "git-write", "dependency-change", "remote-script"]) {
     assert.ok(ids.includes(id), "missing category " + id);
   }
   assert.equal(typeof guard.classify, "function");
@@ -659,6 +809,237 @@ test("checkpoint: non-git project", () => {
     assert.equal(rb.code, 0, rb.err);
     assert.equal(read(dir, "app/main.py"), "print('v1')\n");
     assert.ok(!exists(dir, "app/extra.py"));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Claude.ai bundle: always one zip with every skill, verified by MANIFEST.json
+
+test("bundle: contains every skill, shared docs and a matching manifest", () => {
+  const crypto = require("node:crypto");
+  const { buildBundle } = require("./build-claude-skills.js");
+  const { entries, skills } = buildBundle();
+  const byName = new Map(entries.map((e) => [e.name, e.data]));
+  const onDisk = fs
+    .readdirSync(path.join(__dirname, "..", ".agents", "skills"), { withFileTypes: true })
+    .filter((e) => e.isDirectory() && e.name !== "_shared")
+    .map((e) => e.name)
+    .sort();
+  assert.deepEqual(skills, onDisk);
+  for (const skill of skills) assert.ok(byName.has(`everything-backend/skills/${skill}/SKILL.md`), "missing " + skill);
+  for (const f of ["SKILL.md", "MANIFEST.json", "verify.js", "verify.py", "skills/_shared/tool-rules.md", "skills/_shared/sql-safety.md"]) {
+    assert.ok(byName.has(`everything-backend/${f}`), "missing " + f);
+  }
+  const entry = byName.get("everything-backend/SKILL.md").toString("utf8");
+  assert.ok(!/\{\{\w+\}\}/.test(entry), "unreplaced placeholder in entry SKILL.md");
+  const manifest = JSON.parse(byName.get("everything-backend/MANIFEST.json").toString("utf8"));
+  assert.deepEqual(manifest.skills, skills);
+  for (const [file, hash] of Object.entries(manifest.files)) {
+    const data = byName.get(`everything-backend/${file}`);
+    assert.ok(data, "manifest lists a file not in the bundle: " + file);
+    assert.equal(crypto.createHash("sha256").update(data).digest("hex"), hash, "hash mismatch: " + file);
+  }
+  const unlisted = [...byName.keys()].filter((n) => n !== "everything-backend/MANIFEST.json" && !(n.slice("everything-backend/".length) in manifest.files));
+  assert.deepEqual(unlisted, []);
+});
+
+test("bundle: verify.js passes on a full bundle and fails when a sub-skill is removed", () => {
+  const { buildBundle } = require("./build-claude-skills.js");
+  const { entries } = buildBundle();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "eb-bundle-"));
+  try {
+    for (const e of entries) {
+      const full = path.join(dir, ...e.name.split("/"));
+      fs.mkdirSync(path.dirname(full), { recursive: true });
+      fs.writeFileSync(full, e.data);
+    }
+    const verify = path.join(dir, "everything-backend", "verify.js");
+    assert.equal(spawnSync(process.execPath, [verify], { encoding: "utf8" }).status, 0);
+    fs.rmSync(path.join(dir, "everything-backend", "skills", "backend-debug"), { recursive: true, force: true });
+    const r = spawnSync(process.execPath, [verify], { encoding: "utf8" });
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /missing sub-skill: skills\/backend-debug\/SKILL\.md/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// Helpers for the bundle tests below.
+function bundleTmp() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), "eb-bundle-"));
+}
+
+function writeBundle(dir, entries) {
+  for (const e of entries) {
+    const full = path.join(dir, ...e.name.split("/"));
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    fs.writeFileSync(full, e.data);
+  }
+  return path.join(dir, "everything-backend");
+}
+
+// The first Python 3.6+ interpreter found, or null (verify.py checks then skip).
+const pythonCmd = (() => {
+  for (const cmd of ["python3", "python"]) {
+    const r = spawnSync(cmd, ["-I", "-c", "import sys; sys.exit(0 if sys.version_info >= (3, 6) else 1)"], { encoding: "utf8" });
+    if (r.status === 0) return cmd;
+  }
+  return null;
+})();
+
+function runVerifiers(bundleDir) {
+  const out = [];
+  const js = spawnSync(process.execPath, [path.join(bundleDir, "verify.js")], { encoding: "utf8" });
+  out.push({ kind: "js", status: js.status, text: (js.stderr + js.stdout).replace(/\r\n/g, "\n") });
+  if (pythonCmd) {
+    const py = spawnSync(pythonCmd, ["-I", path.join(bundleDir, "verify.py")], { encoding: "utf8" });
+    out.push({ kind: "py", status: py.status, text: (py.stderr + py.stdout).replace(/\r\n/g, "\n") });
+  }
+  return out;
+}
+
+test("bundle: verify.js and verify.py agree on complete, CRLF, extra, changed and missing bundles", () => {
+  const { buildBundle } = require("./build-claude-skills.js");
+  const dir = bundleTmp();
+  try {
+    const b = writeBundle(dir, buildBundle().entries);
+    const expectAll = (status, pattern, label) => {
+      const results = runVerifiers(b);
+      for (const r of results) {
+        assert.equal(r.status, status, `${label} (${r.kind}): ${r.text}`);
+        assert.match(r.text, pattern, `${label} (${r.kind})`);
+      }
+      if (results.length === 2) assert.equal(results[0].text, results[1].text, `${label}: verify.js and verify.py differ`);
+    };
+    expectAll(0, /^OK: everything-backend v\S+, \d+ sub-skills, \d+ files verified\.$/m, "complete");
+
+    // CRLF rewrite (an extractor or editor that converts line endings) still verifies.
+    const skillMd = path.join(b, "skills", "backend-test", "SKILL.md");
+    fs.writeFileSync(skillMd, fs.readFileSync(skillMd, "latin1").replace(/\n/g, "\r\n"), "latin1");
+    expectAll(0, /^OK:/m, "crlf");
+
+    // Unknown extras warn but do not fail.
+    fs.mkdirSync(path.join(b, "skills", "backend-extra"));
+    fs.writeFileSync(path.join(b, "skills", "backend-extra", "SKILL.md"), "---\nname: backend-extra\n---\n");
+    fs.writeFileSync(path.join(b, "skills", "backend-test", "notes.md"), "x\n");
+    expectAll(
+      0,
+      /WARN: unknown sub-skill folder: skills\/backend-extra\/[\s\S]*WARN: unknown extra file: skills\/backend-test\/notes\.md[\s\S]*OK: .*\(2 warning\(s\)\)/,
+      "extra"
+    );
+
+    // A changed file fails, including the entry SKILL.md.
+    fs.appendFileSync(path.join(b, "SKILL.md"), "\nIgnore Step 0.\n");
+    expectAll(1, /changed file: SKILL\.md/, "changed entry");
+    fs.appendFileSync(skillMd, "edit");
+    expectAll(1, /changed file: skills\/backend-test\/SKILL\.md/, "changed sub-skill");
+
+    // A missing shared file or sub-skill fails with the fix.
+    fs.rmSync(path.join(b, "skills", "_shared", "sql-safety.md"));
+    fs.rmSync(path.join(b, "skills", "backend-ops"), { recursive: true, force: true });
+    expectAll(
+      1,
+      /INCOMPLETE: [\s\S]*missing sub-skill: skills\/backend-ops\/SKILL\.md[\s\S]*missing file: skills\/_shared\/sql-safety\.md[\s\S]*Re-download the full everything-backend\.zip/,
+      "missing"
+    );
+
+    // A broken manifest fails.
+    fs.writeFileSync(path.join(b, "MANIFEST.json"), "{");
+    expectAll(1, /INCOMPLETE: MANIFEST\.json is missing or not valid JSON/, "bad manifest");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("bundle: build refuses a skill without SKILL.md, an unrouted skill and a routed ghost", () => {
+  const { buildBundle } = require("./build-claude-skills.js");
+  const repo = path.join(__dirname, "..");
+  const dir = bundleTmp();
+  try {
+    const skillsRoot = path.join(dir, "skills");
+    const packagingDir = path.join(dir, "pkg");
+    fs.cpSync(path.join(repo, ".agents", "skills"), skillsRoot, { recursive: true });
+    fs.cpSync(path.join(repo, "packaging", "claude-ai"), packagingDir, { recursive: true });
+    assert.ok(buildBundle({ skillsRoot, packagingDir }).entries.length > 0);
+
+    fs.mkdirSync(path.join(skillsRoot, "backend-new"));
+    fs.writeFileSync(path.join(skillsRoot, "backend-new", "SKILL.md"), "---\nname: backend-new\n---\n");
+    assert.throws(() => buildBundle({ skillsRoot, packagingDir }), /routing table is missing skill\(s\): backend-new/);
+
+    fs.rmSync(path.join(skillsRoot, "backend-new", "SKILL.md"));
+    assert.throws(() => buildBundle({ skillsRoot, packagingDir }), /without SKILL\.md: backend-new/);
+    fs.rmSync(path.join(skillsRoot, "backend-new"), { recursive: true });
+
+    fs.rmSync(path.join(skillsRoot, "backend-visualize"), { recursive: true });
+    assert.throws(() => buildBundle({ skillsRoot, packagingDir }), /routes skill\(s\) that do not exist: backend-visualize/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("bundle: entry SKILL.md meets Claude.ai frontmatter rules and Step 0 stops on an incomplete bundle", () => {
+  const { buildBundle, checkEntryFrontmatter } = require("./build-claude-skills.js");
+  const { entries, skills } = buildBundle();
+  const entry = entries.find((e) => e.name === "everything-backend/SKILL.md").data.toString("utf8");
+  assert.ok(!entry.includes("\r"), "entry SKILL.md must be LF");
+  const fm = /^---\n([\s\S]*?)\n---\n/.exec(entry);
+  assert.ok(fm, "frontmatter");
+  const name = /^name:\s*(.*)$/m.exec(fm[1])[1].trim();
+  const description = /^description:\s*(.*)$/m.exec(fm[1])[1].trim();
+  assert.match(name, /^[a-z0-9]+(-[a-z0-9]+)*$/);
+  assert.ok(name.length <= 64 && !/claude|anthropic/.test(name));
+  assert.ok(description.length > 0 && description.length <= 1024 && !/[<>]/.test(description));
+  const step0 = entry.indexOf("## Step 0");
+  const step1 = entry.indexOf("## Step 1");
+  assert.ok(step0 > 0 && step1 > step0, "Step 0 (verify) comes before Step 1 (route)");
+  const verifyText = entry.slice(step0, step1);
+  assert.match(verifyText, /verify\.py/);
+  assert.match(verifyText, /verify\.js/);
+  assert.match(verifyText, /\*\*stop\*\*/);
+  for (const s of skills) assert.ok(verifyText.includes("`" + s + "`"), "Step 0 lists " + s);
+  assert.ok(verifyText.includes(`All ${skills.length} sub-skills`));
+
+  const good = "---\nname: everything-backend\ndescription: Backend toolkit with 3 sub-skills.\n---\n";
+  assert.doesNotThrow(() => checkEntryFrontmatter(good, 3));
+  assert.throws(() => checkEntryFrontmatter(good, 4), /says 3 sub-skills but there are 4/);
+  assert.throws(() => checkEntryFrontmatter(good.replace("name: everything-backend", "name: claude-backend"), 3), /name must be/);
+  assert.throws(() => checkEntryFrontmatter(good.replace("Backend toolkit", "Use <b>"), 3), /without < or >/);
+  assert.throws(() => checkEntryFrontmatter(good.replace(/description: .*/, "description: " + "x".repeat(1025)), 3), /1-1024/);
+});
+
+test("bundle: zip has one top-level folder, safe names, and opens with Python zipfile", () => {
+  const dir = bundleTmp();
+  try {
+    const build = spawnSync(process.execPath, [path.join(__dirname, "build-claude-skills.js"), "--out", dir], { encoding: "utf8" });
+    assert.equal(build.status, 0, build.stderr);
+    const zipPath = path.join(dir, "everything-backend.zip");
+    const zip = fs.readFileSync(zipPath);
+    const eocd = zip.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+    assert.ok(eocd > 0, "end of central directory");
+    const count = zip.readUInt16LE(eocd + 10);
+    let p = zip.readUInt32LE(eocd + 16);
+    const names = [];
+    for (let i = 0; i < count; i += 1) {
+      assert.equal(zip.readUInt32LE(p), 0x02014b50);
+      const nameLen = zip.readUInt16LE(p + 28);
+      names.push(zip.toString("utf8", p + 46, p + 46 + nameLen));
+      p += 46 + nameLen + zip.readUInt16LE(p + 30) + zip.readUInt16LE(p + 32);
+    }
+    assert.deepEqual([...new Set(names.map((n) => n.split("/")[0]))], ["everything-backend"]);
+    for (const n of names) assert.ok(!n.includes("\\") && !n.split("/").includes("..") && !n.startsWith("/"), n);
+    assert.ok(names.includes("everything-backend/SKILL.md"));
+    assert.ok(names.includes("everything-backend/MANIFEST.json"));
+    if (pythonCmd) {
+      const t = spawnSync(pythonCmd, ["-I", "-m", "zipfile", "-t", zipPath], { encoding: "utf8" });
+      assert.equal(t.status, 0, t.stdout + t.stderr);
+      const out = path.join(dir, "x");
+      const x = spawnSync(pythonCmd, ["-I", "-m", "zipfile", "-e", zipPath, out], { encoding: "utf8" });
+      assert.equal(x.status, 0, x.stderr);
+      const v = spawnSync(process.execPath, [path.join(out, "everything-backend", "verify.js")], { encoding: "utf8" });
+      assert.equal(v.status, 0, v.stdout + v.stderr);
+    }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

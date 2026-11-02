@@ -43,6 +43,25 @@ Always generate first, review the generated SQL for `DROP`, type changes and tab
 
 Generators that connect to the database (Prisma `migrate dev --create-only`, Alembic `--autogenerate`, TypeORM `migration:generate`) run without asking only when the configured database is provably local (`<shared>/tool-rules.md` -> Production Targets). Otherwise show the resolved target and ask first, or point the generator at a local or disposable database.
 
+## Migration Role
+
+Migrations and backfill jobs run with a dedicated migration role, not the application role (`<shared>/sql-safety.md` rule 11). The application role keeps only the DML it needs, so an injection in the app cannot run DDL.
+
+- The migration role owns the schema objects and may run DDL. It is not `SUPERUSER` and has no `BYPASSRLS` unless a specific migration needs it, and then only for that run. Its credentials live in the deploy pipeline's secret store, not in the app's runtime environment.
+- The application role gets `SELECT, INSERT, UPDATE, DELETE` (and sequence `USAGE`) on its own schema, nothing more. Grant it through default privileges so new tables are covered without granting DDL:
+
+```sql
+-- run once by the migration role (Always Ask First on a non-local database)
+ALTER DEFAULT PRIVILEGES FOR ROLE app_migrator IN SCHEMA app
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_rw;
+ALTER DEFAULT PRIVILEGES FOR ROLE app_migrator IN SCHEMA app
+  GRANT USAGE, SELECT ON SEQUENCES TO app_rw;
+REVOKE CREATE ON SCHEMA app FROM PUBLIC;
+```
+
+- Point the tool at the migration role through its own connection setting (for example a separate `MIGRATION_DATABASE_URL`, Prisma `directUrl`, the URL in `alembic.ini` or `flyway.conf`). If the project runs migrations with the app's connection string, flag it and propose the split; changing roles or grants on a shared database is Always Ask First.
+- Never run migrations automatically at app startup with the app role: that forces the app role to hold DDL.
+
 ## Running Outside a Transaction
 
 Needed for `CREATE INDEX CONCURRENTLY` and friends on PostgreSQL. Use the tool's per-migration opt-out:

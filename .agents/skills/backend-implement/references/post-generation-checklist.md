@@ -20,6 +20,8 @@ Run every check below after generating or modifying code, before reporting. The 
 
 The checklist is **clean** when every applicable check ran and every finding is either fixed or listed in the summary with `file:line` and a one-line justification.
 
+Three findings can never be justified, only fixed (`<shared>/sql-safety.md` -> Verification, step 5): a query built from strings with untrusted input, an unsafe raw API called with input, and a missing owner predicate on a tenant- or user-owned row. While any of them is open the verdict is **not clean**, whatever else passed. Severity: Critical when the code is reachable from a public or low-privilege endpoint, High otherwise.
+
 If a check could not run (for example no LSP and no type-checker installed), the verdict is **incomplete**, not clean. List the check, the reason, and the exact command the user should run. Do not loop trying to make a missing tool appear.
 
 ## 1. Controllers contain no business logic
@@ -38,16 +40,20 @@ If a check could not run (for example no LSP and no type-checker installed), the
 
 ## 3. No SQL built from strings
 
+The rules behind this check are in `<shared>/sql-safety.md` -> The Rules (1, 2, 5, 6, 7). This check is its static search step.
+
 - Scope: all changed source files.
 - Pattern (case-insensitive): `` \b(select|insert|update|delete)\b.*(\$\{|["'`]\s*\+|\+\s*["'`]|["']\s+%\s*[(\w]|\.format\(|Sprintf\()|(\bf["']|Sprintf\(|\.format\().*\b(select|insert|update|delete)\b ``
-- Pass: zero hits, or each hit is justified as safe:
-  - tagged templates that parameterize `${}` (Prisma `$queryRaw`, `sql` tags from postgres.js or slonik);
-  - interpolated identifiers taken from a fixed allowlist.
+- Pass: zero hits, or each hit is shown to be safe after reading it:
+  - tagged templates that parameterize `${}` (Prisma `$queryRaw`, Drizzle `sql`, `sql` tags from postgres.js or slonik);
+  - interpolated identifiers taken from a fixed server-side allowlist, never the client's string.
 - `%s` and `?` placeholders passed with a separate params argument, as in `cur.execute(sql, params)`, are safe and do not match.
 - Known false positive: a `%` inside a `LIKE` literal (for example `LIKE ' %abc'`).
 - Known miss: the `%` operator pattern needs whitespace after the closing quote, so `"..."%x` without spaces is caught only by the file read below.
-- Also read every changed repository file. Queries built across several lines can escape a line-based pattern.
-- If failed: replace string building with parameterized queries (`$1`, `?`, `%s` with a params tuple, or ORM equivalents).
+- Second pattern, unsafe raw APIs (the "Unsafe with user input" column of `<shared>/sql-safety.md` -> Safe vs Unsafe APIs per Stack): `` \$(query|execute)RawUnsafe|Prisma\.raw\(|sql\.raw\(|\b(where|orderBy|having|groupBy)Raw\(|knex\.raw\(\s*`|sequelize\.literal\(|literal_column\(|order_by\(\s*text\(|\btext\(\s*f["']|\.extra\(|RawSQL\(|FromSqlRaw\(|ExecuteSqlRaw\(|DB::raw\(|find_by_sql|multipleStatements\s*:\s*true|\$where|\$function|\$accumulator|mapReduce|JpaSort\.unsafe\(|Arel\.sql\(|createNativeQuery\(|orderBy\(\s*\$request|filter\(\s*\*\*request|['"]%s['"] ``. Also flag `Order(`, `.order(`, `.orderBy(` and `ORDER BY` whose argument comes from request input (`req.query`, `params[`, `c.Query(`, `request.args`, a DTO field), and GORM `First(&x, id)` / `Find(&x, id)` where `id` is a string (it is treated as SQL; use `First(&x, "id = ?", id)`). For MyBatis XML, `\$\{\w+\}` is string substitution; `#{}` is safe.
+- Pass for the second pattern: each hit uses only compile-time constants or allowlisted identifiers and has a comment saying so. Any hit that receives request data fails.
+- Also read every changed repository/DAO file in full. Queries built across several lines can escape a line-based pattern.
+- If failed: replace string building with parameterized queries (`$1`, `?`, `%s` with a params tuple, or ORM equivalents), map sort and column names through an allowlist, bind lists as arrays, and escape and bind LIKE values, per `<shared>/sql-safety.md`.
 
 ## 4. All endpoints validate input
 
@@ -104,3 +110,20 @@ If a check could not run (for example no LSP and no type-checker installed), the
 - Check: list the business-critical functions this run added or changed (`createUser`, `placeOrder`, `charge`, `payout`, or project equivalents). Search test files for references to each one.
 - Pass: every listed function has at least one test that references it and exercises an error branch.
 - If failed: add at least one unit test for the happy path and one for an error branch, then run the tests (or hand off to `backend-test` for a broader suite). Follow `<shared>/tool-rules.md` -> Test Integrity: never weaken or skip a failing test to get green.
+
+## 10. Owner predicate on tenant- and user-owned rows
+
+- Rule: `<shared>/sql-safety.md` -> The Rules, rule 3 (a WHERE clause is not an access check) and rule 4 (writes are bounded).
+- Scope: changed repository and service files that read, update or delete rows of a table with a `tenant_id`, `org_id`, `owner_id`, `user_id` or similar owner column (check `db-schema.md`).
+- Pattern (case-insensitive) to list the queries to read: `\b(where|find(One|First|Unique|ById|By\w*)?|get(ById)?|update|delete|destroy|filter(_by)?)\b.*\bid\b`
+- Pass: every query on an owned table binds the owner, for example `WHERE id = $1 AND tenant_id = $2`, and the owner value comes from the authenticated principal (session, verified token, request context set by auth middleware), never from the body, query string or path. UPDATE and DELETE include the key and the owner; a zero affected-row count maps to 404.
+- Not a pass: a lookup by id alone with the owner compared in code afterwards, an owner taken from `req.body`, `req.query` or a path parameter, or an "admin" path that skips the owner without a role check.
+- If failed: add the owner to the repository method signature and its WHERE clause, pass it from the principal in the service, and return 404 (not 403) when the row is not found for this owner unless the API design says otherwise. See `backend-auth` -> tenant-scoped authorization.
+
+## 11. Hostile-input tests for new search, filter, sort and id parameters
+
+- Rule: `<shared>/sql-safety.md` -> Verification, step 4. Write the tests with `backend-test` conventions (backend-test -> security tests).
+- Scope: every endpoint this run added or changed that takes a search, filter, sort, id or free-text parameter.
+- Check: search the test files for the endpoint's route and at least one payload from the Verification list (for example `' OR '1'='1`, `1; DROP TABLE`, `$ne`, an unknown sort column, another tenant's id).
+- Pass: each such endpoint has tests that send the payloads and assert a 400 or an empty or own-tenant result, never extra rows, a 500, or a changed row count; and one test that requests another tenant's or user's id and asserts 404 or 403.
+- If failed: add the tests, then run them on local targets only. A missing hostile-input test makes the verdict **incomplete**, not clean.

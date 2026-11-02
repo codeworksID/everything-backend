@@ -82,6 +82,7 @@ message DeleteUserResponse {}
 - Fields are snake_case; messages and services PascalCase; enum values UPPER_SNAKE_CASE with the enum name as prefix and a zero value `..._UNSPECIFIED`.
 - Use `google.protobuf.Timestamp` for times and `FieldMask` for partial updates.
 - List RPCs use `page_size` and an opaque `page_token`, with a server-side maximum.
+- Sorting uses an enum (`UserOrderBy { USER_ORDER_BY_UNSPECIFIED = 0; USER_ORDER_BY_CREATED_AT_DESC = 1; ... }`), not a free `string order_by`. If you follow AIP-132's string `order_by`, the server parses it against an allowlist and rejects anything else with `INVALID_ARGUMENT`. Filters are typed fields, or an AIP-160 `filter` string parsed into bound values, never passed to SQL (`_shared/sql-safety.md` rules 2, 10). Proto has no length or format constraints; enforce id format, string lengths and `repeated` item caps with protovalidate (`buf.validate`) or in the handler.
 
 ## Errors
 

@@ -17,7 +17,7 @@ Not for: grading code quality or security (backend-doctor, backend-security), or
 
 ## Before You Start
 
-1. Resolve the shared docs folder ("<shared>"): first `_shared/` inside this skill's folder (bundled installs, e.g. Claude.ai), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
+1. Resolve the shared docs folder ("<shared>"): first `_shared/` inside this skill's folder (bundled installs), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
 2. Read `<shared>/tool-rules.md` (mode=auto contract, checkpoints) and `<shared>/host-tools.md` if the actions below don't map clearly to your host's tools. Read `<shared>/memory-schema.md`: it defines every memory file you write.
 3. Load project memory per `<shared>/context-loading.md`. Missing memory is normal for this skill: it is the skill that creates it. Do not call backend-scan from here.
 4. If the detected stack matches a file in `<shared>/stacks/`, read it.

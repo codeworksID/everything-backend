@@ -21,7 +21,7 @@ Not for:
 
 ## Before You Start
 
-1. Resolve the shared docs folder ("<shared>"): first `_shared/` inside this skill's folder (bundled installs, e.g. Claude.ai), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
+1. Resolve the shared docs folder ("<shared>"): first `_shared/` inside this skill's folder (bundled installs), then `../_shared/` next to it; other fallbacks are in `<shared>/context-loading.md` -> Resolving `_shared/` Files. A missing shared doc is a warning, not a stop.
 2. Read `<shared>/tool-rules.md` (mode=auto contract, Production Targets, Test Integrity, Command Time Budgets, checkpoints) and `<shared>/host-tools.md` if the actions below don't map clearly to your host's tools. Read `<shared>/principles.md` (what findings are measured against) and the issues.md section of `<shared>/memory-schema.md`.
 3. Load project memory per `<shared>/context-loading.md`: always `project-overview.md` and `tech-stack.md`; `api-patterns.md` and `db-schema.md` when the project has endpoints or a database; `test-strategy.md` if it exists; `decisions.md` only when a finding contradicts or depends on a recorded decision. Also load `issues.md` if it exists, to check known issues. A missing `issues.md` is normal; doctor creates it in Step 9. If all memory is missing, follow the Missing-Memory Rule there (in `mode=auto`, run backend-scan first).
 4. If the detected stack matches a file in `<shared>/stacks/`, read it.
@@ -35,7 +35,8 @@ Doctor-specific checks:
 
 - `references/commands.md`: read in Step 1 to pick test, coverage, build, lint, audit and migration-status commands per stack, package manager and Python environment.
 - `references/smoke-test.md`: read before Step 6 (start command, port, health route discovery, Bash and PowerShell start/poll/stop).
-- `references/static-checks.md`: read before Step 7 (injection sinks per stack, secret search and masking, bandit flags, architecture, performance and resilience checks).
+- `references/static-checks.md`: read before Step 7 (injection sinks per stack, owner-predicate (BOLA) check, secret search and masking, bandit flags, architecture, performance and resilience checks).
+- `<shared>/sql-safety.md`: read before Step 7. It is the source of truth for what counts as safe data access and for injection and BOLA severity.
 - `references/output-format.md`: read in Step 8 (the output template, the grading rubric and recommendation patterns per finding type).
 
 ## Inputs
@@ -58,8 +59,8 @@ This is the scale for doctor's findings. Other skills (backend-ops, the orchestr
 
 | Severity | Examples |
 |---|---|
-| Critical | Failing build; authentication bypass; confirmed injection (SQL, command, template); a committed live secret; data-loss or broken-invariant risk; a known exploitable vulnerability in a production dependency |
-| High | Failing tests on critical paths (auth, payments, persistence); missing ownership or authorization check; missing validation on create, update, auth or payment endpoints; high-severity vulnerability in a production dependency; app fails to start from a code error; health route returns non-2xx; pending or diverged migrations; god service or business rules duplicated across endpoints; type errors that can fail at runtime |
+| Critical | Failing build; authentication bypass; confirmed injection (SQL, NoSQL, command, template) or a missing owner predicate on an owned row, when reachable from a public or low-privilege endpoint (High otherwise, per `<shared>/sql-safety.md`); a committed live secret; data-loss or broken-invariant risk; a known exploitable vulnerability in a production dependency |
+| High | Failing tests on critical paths (auth, payments, persistence); missing ownership or authorization check (Critical when reachable from a public or low-privilege endpoint, per `<shared>/sql-safety.md` -> Verification); missing validation on create, update, auth or payment endpoints; high-severity vulnerability in a production dependency; app fails to start from a code error; health route returns non-2xx; pending or diverged migrations; god service or business rules duplicated across endpoints; type errors that can fail at runtime |
 | Medium | Weak layering; N+1 or unbounded queries; inconsistent error mapping; missing health route; outbound calls without timeouts; environment or setup failures; flaky tests; vulnerabilities in dev-only dependencies; missing tests on critical paths; a tool that is missing or failed to run (category "Tooling") |
 | Low | Naming, documentation, minor duplication, cosmetic lint warnings, non-critical observability gaps |
 
@@ -112,7 +113,7 @@ Done when: the probe result is recorded and no process this run started is still
 
 ### Step 7: Static checks
 
-Follow `references/static-checks.md`. Search for candidates, read each hit in context, and report only confirmed findings. Cover injection sinks, secrets in the working tree, missing validation and obvious ownership gaps, layering and architecture, performance (static only) and resilience. Anything that needs a deeper security look goes to "Needs review (backend-security)".
+Follow `references/static-checks.md`, judging data-access hits against `<shared>/sql-safety.md`. Search for candidates, read each hit in context, and report only confirmed findings. Cover injection sinks (SQL, NoSQL operator, command, template), reads and writes of owned rows without an owner predicate (candidate BOLA, hand to backend-security), secrets in the working tree, missing validation and obvious ownership gaps, layering and architecture, performance (static only) and resilience. Anything that needs a deeper security look goes to "Needs review (backend-security)".
 
 Done when: every confirmed finding has a file, line and evidence excerpt.
 
