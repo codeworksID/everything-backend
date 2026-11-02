@@ -6,6 +6,7 @@ Doctor covers obvious anti-patterns only. A security review (threat model, OWASP
 
 ## Contents
 
+- Bundled scanner
 - Injection sinks per stack
 - Secrets in the working tree
 - Python SAST with bandit
@@ -13,6 +14,10 @@ Doctor covers obvious anti-patterns only. A security review (threat model, OWASP
 - Performance anti-patterns
 - Resilience anti-patterns
 - Mapping to report rows
+
+## Bundled Scanner
+
+Run `node <shared>/scripts/security-scan.js --json <source roots>` first (`--changed --base <base>` in `mode=review`). It is read-only, needs only Node, skips dependency, vendored and generated files, and covers the sinks below plus the rest of `<shared>/secure-coding.md` (command and code injection, deserialization, XXE, TLS, weak crypto and randomness, JWT misuse, hardcoded secrets, CORS, CSRF, mass assignment, SSRF, path traversal, open redirect, XSS, ReDoS, prototype pollution, error leaks, secrets in logs, CI and Docker supply chain). Each finding names its rule and the S-rule or sql-safety rule it violates. Read each hit in context before reporting it, map severity with `secure-coding.md` -> Verification, step 5, and still run the searches below for what a line-based scanner misses (multi-line queries, owner predicates).
 
 ## Injection Sinks per Stack
 

@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 "use strict";
+// security-scan: ignore-file this file holds deliberately insecure fixtures for the scanner tests
 
-// Tests for .agents/skills/_shared/scripts/guard.js and checkpoint.js.
+// Tests for .agents/skills/_shared/scripts/guard.js, checkpoint.js and
+// security-scan.js, the plugin hook and the Claude.ai bundle.
 // Zero dependencies (node:test + node:assert). Run: node scripts/test-scripts.js
 
 const test = require("node:test");
@@ -772,6 +774,249 @@ test("guard-hook: secret files, decisions and bad input", () => {
     assert.equal(r.status, 0, bad);
     assert.equal(r.stdout, "", bad);
   }
+});
+
+// ---------------------------------------------------------------------------
+// security-scan.js
+
+const scan = require(path.join(scriptsDir, "security-scan.js"));
+
+// [file, line, expected rule (or null for "no finding")]
+const scanCases = [
+  ["a.ts","const r = await db.query(`SELECT * FROM users WHERE id = ${id}`);","sql-template-literal"],
+  ["a.ts","const r = await prisma.$queryRaw`SELECT * FROM users WHERE id = ${id}`;",null],
+  ["a.ts","const r = await db.query(sql`SELECT * FROM users WHERE id = ${id}`);",null],
+  ["a.ts","await db.query('SELECT * FROM users WHERE id = $1', [id]);",null],
+  ["a.ts","await db.query(\"SELECT * FROM users WHERE name = '\" + name + \"'\");","sql-concatenation"],
+  ["a.py","cur.execute(f\"SELECT * FROM users WHERE id = {user_id}\")","sql-format-string"],
+  ["a.py","cur.execute(\"SELECT * FROM users WHERE id = %s\" % uid)","sql-format-string"],
+  ["a.py","cur.execute(\"SELECT * FROM users WHERE id = %s\", (uid,))",null],
+  ["a.go","rows, err := db.Query(fmt.Sprintf(\"SELECT * FROM users WHERE id = %d\", id))","sql-format-string"],
+  ["a.go","rows, err := db.QueryContext(ctx, \"SELECT * FROM users WHERE id = $1\", id)",null],
+  ["a.cs","ctx.Users.FromSqlRaw($\"SELECT * FROM Users WHERE Id = {id}\")","sql-unsafe-raw-api"],
+  ["a.cs","ctx.Users.FromSql($\"SELECT * FROM Users WHERE Id = {id}\")",null],
+  ["a.rb","User.where(\"name = '#{params[:name]}'\")",null],
+  ["a.rb","User.find_by_sql(\"SELECT * FROM users WHERE name = '#{name}'\")","sql-format-string"],
+  ["a.php","$db->query(\"SELECT * FROM users WHERE id = $id\");","sql-format-string"],
+  ["a.ts","await prisma.$queryRawUnsafe(q)","sql-unsafe-raw-api"],
+  ["a.ts","qb.orderBy(req.query.sort)","sql-order-by-input"],
+  ["m.xml","<select id=\"x\">SELECT * FROM t ORDER BY ${col}</select>","mybatis-dollar-substitution"],
+  ["a.ts","const u = await User.findOne(req.body);","nosql-operator-injection"],
+  ["a.ts","await col.find({ $where: 'this.a > 1' })","nosql-where-operator"],
+  ["a.ts","exec(`convert ${file} out.png`)","cmd-shell-js"],
+  ["a.ts","execFile('convert', [file, 'out.png'])",null],
+  ["a.ts","const m = /a(b)/.exec(str);",null],
+  ["a.py","subprocess.run(cmd, shell=True)","cmd-shell-true"],
+  ["a.py","os.system(f\"tar xf {name}\")","cmd-shell-py"],
+  ["a.py","subprocess.run([\"tar\", \"xf\", name], check=True)",null],
+  ["a.go","exec.Command(\"sh\", \"-c\", cmd)","cmd-shell-go"],
+  ["a.go","exec.Command(\"git\", \"status\")",null],
+  ["a.java","Runtime.getRuntime().exec(\"ping \" + host)","cmd-runtime-exec"],
+  ["a.php","system(\"ping \" . $host);","cmd-shell-php-rb"],
+  ["a.ts","const fn = new Function('a', body);","code-eval"],
+  ["a.py","result = eval(expr)","code-eval"],
+  ["a.py","return render_template_string(request.args.get('t'))","ssti-template-from-input"],
+  ["a.py","data = pickle.loads(blob)","unsafe-deserialization"],
+  ["a.py","cfg = yaml.load(text)","unsafe-deserialization"],
+  ["a.py","cfg = yaml.load(text, Loader=yaml.SafeLoader)",null],
+  ["a.py","cfg = yaml.safe_load(text)",null],
+  ["a.java","ObjectInputStream in = new ObjectInputStream(sock.getInputStream());","unsafe-deserialization"],
+  ["a.cs","var f = new BinaryFormatter();","unsafe-deserialization"],
+  ["a.cs","TypeNameHandling = TypeNameHandling.All","unsafe-deserialization"],
+  ["a.php","$o = unserialize($_COOKIE['x']);","unsafe-deserialization"],
+  ["a.py","parser = etree.XMLParser(resolve_entities=True)","xxe-parser"],
+  ["a.ts","const agent = new https.Agent({ rejectUnauthorized: false });","tls-verification-disabled"],
+  ["a.py","requests.get(url, verify=False)","tls-verification-disabled"],
+  ["a.go","tls.Config{InsecureSkipVerify: true}","tls-verification-disabled"],
+  ["a.py","requests.get(url, verify=True, timeout=5)",null],
+  ["a.ts","const h = crypto.createHash('md5').update(password).digest('hex');","weak-password-hash"],
+  ["a.ts","const h = await argon2.hash(password);",null],
+  ["a.ts","const etag = crypto.createHash('sha1').update(body).digest('hex');",null],
+  ["a.ts","const c = crypto.createCipher('aes-256-cbc', key);","weak-cipher"],
+  ["a.py","cipher = AES.new(key, AES.MODE_ECB)","weak-cipher"],
+  ["a.ts","const token = Math.random().toString(36).slice(2);","insecure-random"],
+  ["a.ts","const jitter = Math.random() * 100;",null],
+  ["a.py","reset_token = ''.join(random.choices(chars, k=32))","insecure-random"],
+  ["a.py","reset_token = secrets.token_urlsafe(32)",null],
+  ["a.py","jwt.decode(tok, options={\"verify_signature\": False})","jwt-none-or-unverified"],
+  ["a.ts","jwt.verify(tok, key, { algorithms: ['none'] })","jwt-none-or-unverified"],
+  ["a.ts","jwt.verify(tok, key, { algorithms: ['RS256'], audience: 'api' })",null],
+  ["a.ts","const claims = jwt.decode(tok);","jwt-decode-without-verify"],
+  ["a.ts","if (signature === req.headers['x-signature']) ok();","timing-unsafe-compare"],
+  ["a.ts","if (token === undefined) return;",null],
+  ["a.ts","res.cookie('sid', id, { httpOnly: false });","cookie-flags-off"],
+  ["a.ts","const key = 'AKIAABCDEFGHIJKLMNOP';","secret-cloud-token"],
+  ["a.ts","const apiKey = process.env.API_KEY;",null],
+  ["a.ts","const dbPassword = 'Sup3rS3cretValue!';","secret-assignment"],
+  ["a.ts","const dbPassword = 'changeme-in-prod-please';",null],
+  ["a.ts","const PASSWORD_FIELD = 'passwordConfirmation';",null],
+  ["a.ts","const url = 'postgres://app:hunter2realpw@prod-db.internal:5432/app';","secret-connection-string"],
+  ["a.ts","const url = 'postgres://app:password@localhost:5432/app';",null],
+  ["tests/a.test.ts","const key = 'AKIAABCDEFGHIJKLMNOP';","secret-cloud-token"],
+  ["tests/a.test.ts","requests.get(url, verify=False)",null],
+  ["a.ts","app.use(cors({ origin: true, credentials: true }));","cors-wildcard-credentials"],
+  ["a.ts","app.use(cors({ origin: ['https://app.example.com'], credentials: true }));",null],
+  ["a.py","app.run(host='0.0.0.0', debug=True)","debug-mode-on"],
+  ["a.java","http.csrf().disable();","csrf-disabled"],
+  ["a.ts","await prisma.user.update({ where: { id }, data: req.body });","mass-assignment"],
+  ["a.ts","await User.create(req.body);","mass-assignment"],
+  ["a.ts","await User.create({ name: body.name, email: body.email });",null],
+  ["a.rb","User.update(params.permit!)","mass-assignment"],
+  ["a.ts","const r = await fetch(req.query.url);","ssrf-request-url"],
+  ["a.py","r = requests.get(request.args['url'])","ssrf-request-url"],
+  ["a.ts","const r = await fetch('https://api.stripe.com/v1/charges');",null],
+  ["a.ts","res.sendFile(path.join(UPLOADS, req.params.name));","path-traversal"],
+  ["a.py","return send_file(request.args['f'])","path-traversal"],
+  ["a.py","tar.extractall(dest)","zip-slip"],
+  ["a.py","tar.extractall(dest, filter='data')",null],
+  ["a.ts","res.redirect(req.query.next);","open-redirect"],
+  ["a.ts","el.innerHTML = msg;","xss-sink"],
+  ["a.ts","res.send(req.query.q);","xss-sink"],
+  ["a.ts","const re = new RegExp(req.query.pattern);","regex-from-input"],
+  ["a.ts","_.merge(config, req.body);","prototype-pollution"],
+  ["a.ts","res.status(500).json({ error: err.stack });","error-detail-leak"],
+  ["a.ts","res.status(500).json({ error: 'internal', requestId });",null],
+  ["a.ts","logger.info('login', { email, password });","secret-in-log"],
+  ["a.ts","logger.warn('invalid password for user', { userId });",null],
+  ["Dockerfile","RUN curl -fsSL https://get.example.sh | sh","pipe-to-shell"],
+  ["Dockerfile","FROM node:latest","docker-latest-or-root"],
+  ["Dockerfile","FROM node:20.11-alpine@sha256:abc",null],
+  ["a.ts","// const r = await fetch(req.query.url);",null],
+  ["a.ts","const r = await fetch(req.query.url); // security-scan: ignore ssrf-request-url url is validated by allowlistHost() above",null],
+];
+
+test("security-scan: rule cases (positives and safe counterparts)", () => {
+  const failures = [];
+  for (const [file, line, rule] of scanCases) {
+    const got = scan.scanText(line, file).map((f) => f.rule);
+    const ok = rule ? got.includes(rule) : got.length === 0;
+    if (!ok) failures.push(`${file} | ${line} -> expected ${rule}, got ${JSON.stringify(got)}`);
+  }
+  assert.deepEqual(failures, []);
+  assert.ok(scanCases.length >= 90);
+});
+
+test("security-scan: rules are well-formed and every rule has a positive case", () => {
+  const ids = new Set();
+  for (const r of scan.RULES) {
+    assert.ok(/^[a-z0-9-]+$/.test(r.id), r.id);
+    assert.ok(!ids.has(r.id), `duplicate ${r.id}`);
+    ids.add(r.id);
+    assert.ok(scan.SEVERITIES.includes(r.severity), r.id);
+    assert.ok(/^(secure-coding S([1-9]|1[0-8])|sql-safety ([1-9]|1[0-2]))$/.test(r.ref), `${r.id} ref ${r.ref}`);
+    assert.ok(r.msg && r.msg.length > 20, r.id);
+  }
+  const covered = new Set(scanCases.map((c) => c[2]).filter(Boolean));
+  const extra = {
+    // built by concatenation so this file does not itself contain a key header
+    "secret-private-key": ["a.ts", "const k = `-----BEGIN " + "RSA PRIVATE KEY-----`;"],
+    "xxe-java-factory": ["a.java","DocumentBuilderFactory f = DocumentBuilderFactory.newInstance();"],
+    "hardcoded-iv-or-salt": ["a.ts", "const iv = Buffer.from('000102030405', 'hex');"],
+    "cors-reflect-origin": ["a.ts", "res.setHeader('Access-Control-Allow-Origin', req.headers.origin);"],
+    "header-injection": ["a.ts", "res.setHeader('X-Name', req.query.name);"],
+    "gha-script-injection": ["ci.yml", "on: issues\njobs:\n  a:\n    steps:\n      - run: echo \"${{ github.event.issue.title }}\""],
+    "gha-pull-request-target": ["ci.yml", "on:\n  pull_request_target:\njobs:\n  a:\n    steps:\n      - uses: actions/checkout@0123456789abcdef0123456789abcdef01234567"],
+    "gha-unpinned-action": ["ci.yml", "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4"],
+  };
+  for (const [id, [file, text]] of Object.entries(extra)) {
+    assert.ok(scan.scanText(text, file).some((f) => f.rule === id), `no positive for ${id}`);
+    covered.add(id);
+  }
+  const missing = scan.RULES.map((r) => r.id).filter((id) => !covered.has(id));
+  assert.deepEqual(missing, []);
+});
+
+test("security-scan: suppressions, comments, tests, vendored files and redaction", () => {
+  const ssrf = "const r = await fetch(req.query.url);";
+  // a reasoned suppression on the line above silences only that rule
+  assert.equal(scan.scanText("// security-scan: ignore ssrf-request-url host checked by allowHost() above\n" + ssrf, "a.ts").length, 0);
+  // no reason, or an unknown rule id, is itself a finding and does not silence
+  const noReason = scan.scanText(ssrf + " // security-scan: ignore ssrf-request-url", "a.ts").map((f) => f.rule);
+  assert.ok(noReason.includes("invalid-suppression") && noReason.includes("ssrf-request-url"), JSON.stringify(noReason));
+  const wrongId = scan.scanText(ssrf + " // security-scan: ignore made-up-rule because I said so", "a.ts").map((f) => f.rule);
+  assert.ok(wrongId.includes("invalid-suppression") && wrongId.includes("ssrf-request-url"), JSON.stringify(wrongId));
+  // ignore-file needs a reason and only works near the top
+  assert.ok(scan.ignoreFileReason("// security-scan: ignore-file generated rule fixtures for tests\n"));
+  assert.equal(scan.ignoreFileReason("// security-scan: ignore-file x\n"), null);
+  assert.equal(scan.ignoreFileReason("\n".repeat(30) + "// security-scan: ignore-file generated rule fixtures\n"), null);
+  // test files only get secret-format rules
+  assert.equal(scan.scanText("requests.get(url, verify=False)", "tests/test_api.py").length, 0);
+  assert.equal(scan.scanText("requests.get(url, verify=False)", "tests/test_api.py", { includeTests: true }).length, 1);
+  assert.ok(scan.isTestFile("src/__tests__/a.ts") && scan.isTestFile("pkg/a_test.go") && !scan.isTestFile("src/testing-utils.ts"));
+  // vendored and generated code
+  assert.ok(scan.isVendored("public/js/app.js", "x") && scan.isVendored("a/jquery-3.7.1.js", "x") && scan.isVendored("x.min.js", "x"));
+  assert.ok(scan.isVendored("src/gen.ts", "// Code generated by protoc. DO NOT EDIT.\n"));
+  assert.ok(!scan.isVendored("src/app.ts", "export const a = 1;"));
+  // .env files are not scanned (secrets belong there)
+  assert.equal(scan.langOf(".env"), null);
+  // secret values never appear in output
+  const [hit] = scan.scanText("const k = 'AKIAABCDEFGHIJKLMNOP';", "a.ts");
+  assert.equal(hit.rule, "secret-cloud-token");
+  assert.ok(!hit.snippet.includes("AKIAABCDEFGHIJKLMNOP"), hit.snippet);
+  // unknown file types are ignored
+  assert.equal(scan.scanText("eval(x)", "notes.md").length, 0);
+});
+
+test("security-scan CLI: exit codes, --fail-on, --json and --changed", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "eb-scan-"));
+  try {
+    fs.mkdirSync(path.join(dir, "src"));
+    fs.writeFileSync(path.join(dir, "src", "ok.ts"), "export const a = 1;\n");
+    fs.writeFileSync(path.join(dir, "src", "bad.py"), "import yaml\ncfg = yaml.load(text)\nel = 1\n");
+    fs.writeFileSync(path.join(dir, "src", "med.ts"), "el.innerHTML = msg;\n");
+    const cli = (args, cwd = dir) => spawnSync(process.execPath, [path.join(scriptsDir, "security-scan.js"), ...args], { cwd, encoding: "utf8" });
+    assert.equal(cli([path.join(dir, "src", "ok.ts")]).status, 0);
+    const bad = cli(["--json", "src"]);
+    assert.equal(bad.status, 1, bad.stderr);
+    const j = JSON.parse(bad.stdout);
+    assert.equal(j.files, 3);
+    assert.deepEqual(j.findings.map((f) => f.rule).sort(), ["unsafe-deserialization", "xss-sink"]);
+    assert.equal(cli([path.join(dir, "src", "med.ts")]).status, 0, "medium passes at the default fail-on");
+    assert.equal(cli(["--fail-on", "medium", path.join(dir, "src", "med.ts")]).status, 1);
+    assert.equal(cli(["--fail-on", "nope"]).status, 2);
+    assert.equal(cli(["--bogus"]).status, 2);
+    assert.equal(cli(["--changed", "src"]).status, 2);
+    // --changed: only files changed since HEAD plus untracked
+    git(dir, ["init", "-q"]);
+    git(dir, ["add", "src/ok.ts"]);
+    git(dir, ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init"]);
+    const changed = cli(["--changed", "--json"]);
+    assert.equal(JSON.parse(changed.stdout).files, 2, changed.stderr);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("guard-hook: insecure code in Write, Edit and MultiEdit asks; safe code and strict mode", () => {
+  const hookPath = path.join(__dirname, "..", "hooks", "guard-hook.js");
+  const run = (input, env = {}) =>
+    spawnSync(process.execPath, [hookPath], { input: JSON.stringify(input), encoding: "utf8", env: { ...process.env, EVERYTHING_BACKEND_GUARD: "", ...env } });
+  const secret = "AKIAABCDEFGHIJKLMNOP";
+  const w = run({ tool_name: "Write", tool_input: { file_path: "src/a.ts", content: "const r = await db.query(`SELECT * FROM t WHERE id = ${id}`);\nconst k = '" + secret + "';" } });
+  const out = JSON.parse(w.stdout).hookSpecificOutput;
+  assert.equal(out.permissionDecision, "ask");
+  assert.match(out.permissionDecisionReason, /insecure-code: \[sql-template-literal\]/);
+  assert.ok(!out.permissionDecisionReason.includes(secret), "secret echoed in the reason");
+  const e = run({ tool_name: "Edit", tool_input: { file_path: "a.py", old_string: "x", new_string: "subprocess.run(cmd, shell=True)" } });
+  assert.match(JSON.parse(e.stdout).hookSpecificOutput.permissionDecisionReason, /cmd-shell-true/);
+  const m = run({ tool_name: "MultiEdit", tool_input: { file_path: "a.py", edits: [{ old_string: "a", new_string: "x = 1" }, { old_string: "b", new_string: "d = pickle.loads(b)" }] } });
+  assert.match(JSON.parse(m.stdout).hookSpecificOutput.permissionDecisionReason, /unsafe-deserialization/);
+  // safe code, docs, tests, medium findings (default mode) and bad input pass silently
+  for (const input of [
+    { tool_name: "Write", tool_input: { file_path: "src/a.ts", content: "await db.query('SELECT * FROM t WHERE id = $1', [id]);" } },
+    { tool_name: "Write", tool_input: { file_path: "README.md", content: "never call eval(x) or os.system(cmd)" } },
+    { tool_name: "Write", tool_input: { file_path: "tests/test_a.py", content: "requests.get(url, verify=False)" } },
+    { tool_name: "Edit", tool_input: { file_path: "src/a.ts", old_string: "a", new_string: "el.innerHTML = msg;" } },
+    { tool_name: "Edit", tool_input: { file_path: "src/a.ts", old_string: "a", new_string: 42 } },
+  ]) {
+    const r = run(input);
+    assert.equal(r.status, 0);
+    assert.equal(r.stdout, "", JSON.stringify(input));
+  }
+  // strict mode asks on medium; off disables
+  const medium = { tool_name: "Edit", tool_input: { file_path: "src/a.ts", old_string: "a", new_string: "el.innerHTML = msg;" } };
+  assert.match(run(medium, { EVERYTHING_BACKEND_GUARD: "strict" }).stdout, /xss-sink/);
+  assert.equal(run({ tool_name: "Write", tool_input: { file_path: "a.py", content: "d = pickle.loads(b)" } }, { EVERYTHING_BACKEND_GUARD: "off" }).stdout, "");
 });
 
 test("install: --force refuses a target inside the skills source", () => {

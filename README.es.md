@@ -30,7 +30,7 @@ Skills de ingeniería backend para agentes de programación con IA: descubrimien
 
 El material compartido está en `.agents/skills/_shared/`:
 
-- las reglas que sigue cada skill (`tool-rules.md`, `context-loading.md`, `memory-schema.md`, `principles.md`), incluido `sql-safety.md`, las reglas de acceso a datos a prueba de inyección (solo parámetros enlazados, identificadores en una allowlist, predicados de propietario en cada fila de un tenant o usuario, y pruebas con entradas hostiles antes de que un cambio se considere terminado)
+- las reglas que sigue cada skill (`tool-rules.md`, `context-loading.md`, `memory-schema.md`, `principles.md`), incluido `sql-safety.md`, las reglas de acceso a datos a prueba de inyección (solo parámetros enlazados, identificadores en una allowlist, predicados de propietario en cada fila de un tenant o usuario, y pruebas con entradas hostiles antes de que un cambio se considere terminado), y `secure-coding.md`, las reglas para todo lo demás (S1-S18: sin asignación masiva, sin shell ni `eval`, rutas de archivo contenidas, llamadas salientes protegidas contra SSRF, parsers seguros, criptografía probada, sin secretos en el código ni en los logs, recursos acotados, webhooks verificados, cadena de suministro fijada), comprobadas por el script incluido `scripts/security-scan.js`
 - un mapa de nombres de herramientas para cada host (`host-tools.md`)
 - referencias de stacks (`stacks/postgres.md`, `stacks/node-typescript.md`, `stacks/python-fastapi.md`)
 - los scripts de control (`scripts/checkpoint.js`, `scripts/guard.js`)
@@ -75,6 +75,7 @@ El plugin instala todos los skills más un guard hook `PreToolUse`. El hook hace
 - comandos de despliegue e infraestructura (`kubectl apply`, `helm upgrade`, `terraform apply`, `docker push`)
 - borrados recursivos
 - ediciones a archivos de secretos (`.env`, claves)
+- escribir código inseguro: cada `Write` o `Edit` se analiza con `security-scan.js`, y los hallazgos críticos o altos (SQL construido con cadenas, llamadas a shell, `eval`, deserializadores inseguros, TLS desactivado, secretos en el código, asignación masiva, SSRF, path traversal) requieren tu confirmación
 
 Para controlar el hook:
 

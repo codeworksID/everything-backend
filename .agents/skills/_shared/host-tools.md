@@ -39,6 +39,7 @@ Installed as a plugin, the pack ships `hooks/guard-hook.js` as a `PreToolUse` ho
 
 - for `Bash` and `PowerShell` calls, classifies `tool_input.command` with `guard.js`; on "ask" it returns `permissionDecision: "ask"` with the reason `everything-backend guard: <reason>`, so Claude Code shows a confirmation prompt;
 - for `Write`, `Edit` and `MultiEdit`, asks before touching secret files: `.env`, `.env.*` (except `.env.example`, `.env.sample`, `.env.template`), `*.pem`, `*.key`, `id_rsa*`, `credentials*.json`;
+- for `Write`, `Edit` and `MultiEdit` on code, scans the text being added with `security-scan.js` and asks (category `insecure-code`) when it finds a critical or high issue (medium too in `strict` mode): string-built SQL, shell calls, `eval`, unsafe deserializers, disabled TLS checks, hardcoded secrets, mass assignment, SSRF, path traversal and the rest of `secure-coding.md`. The reason names the rule and line, never the matched text;
 - prints nothing (no objection) for everything else, and never crashes the session: on an internal error it exits 0 silently.
 
 Control it with the environment variable `EVERYTHING_BACKEND_GUARD`:
@@ -48,6 +49,18 @@ Control it with the environment variable `EVERYTHING_BACKEND_GUARD`:
 - `off`: disables the hook.
 
 Plain skill installs (`~/.claude/skills`, `<project>/.claude/skills`) do not include the hook. Use the manual check below, or add the hook to your settings yourself.
+
+### All hosts: run security-scan.js
+
+The insecure-code check is a script every host can run, with or without the hook:
+
+```bash
+node <shared>/scripts/security-scan.js --changed                 # files changed since HEAD, plus untracked
+node <shared>/scripts/security-scan.js --changed --base main     # the whole branch
+node <shared>/scripts/security-scan.js src/ --json --fail-on medium
+```
+
+Exit 0 means no finding at or above `--fail-on` (default `high`); exit 1 means findings; exit 2 is a usage error. Test files only get the secret-format rules unless `--include-tests` is passed. A reviewed false positive is suppressed in the code with `security-scan: ignore <rule-id> <reason>` on the same line or the line above; a suppression without a reason is itself a finding. Secret values are never printed.
 
 ### Other hosts: run guard.js manually
 

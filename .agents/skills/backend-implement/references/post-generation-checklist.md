@@ -20,7 +20,7 @@ Run every check below after generating or modifying code, before reporting. The 
 
 The checklist is **clean** when every applicable check ran and every finding is either fixed or listed in the summary with `file:line` and a one-line justification.
 
-Three findings can never be justified, only fixed (`<shared>/sql-safety.md` -> Verification, step 5): a query built from strings with untrusted input, an unsafe raw API called with input, and a missing owner predicate on a tenant- or user-owned row. While any of them is open the verdict is **not clean**, whatever else passed. Severity: Critical when the code is reachable from a public or low-privilege endpoint, High otherwise.
+These findings can never be justified, only fixed (`<shared>/sql-safety.md` -> Verification, step 5, and `<shared>/secure-coding.md` -> Verification, step 5): a query built from strings with untrusted input, an unsafe raw API called with input, a missing owner predicate on a tenant- or user-owned row, a missing authentication or role check on a non-public route, and a request value reaching a shell, file path, outbound URL, deserializer, template compiler or `eval` without its containment (check 13). While any of them is open the verdict is **not clean**, whatever else passed. Severity: Critical when the code is reachable from a public or low-privilege endpoint, High otherwise.
 
 If a check could not run (for example no LSP and no type-checker installed), the verdict is **incomplete**, not clean. List the check, the reason, and the exact command the user should run. Do not loop trying to make a missing tool appear.
 
@@ -127,3 +127,19 @@ The rules behind this check are in `<shared>/sql-safety.md` -> The Rules (1, 2, 
 - Check: search the test files for the endpoint's route and at least one payload from the Verification list (for example `' OR '1'='1`, `1; DROP TABLE`, `$ne`, an unknown sort column, another tenant's id).
 - Pass: each such endpoint has tests that send the payloads and assert a 400 or an empty or own-tenant result, never extra rows, a 500, or a changed row count; and one test that requests another tenant's or user's id and asserts 404 or 403.
 - If failed: add the tests, then run them on local targets only. A missing hostile-input test makes the verdict **incomplete**, not clean.
+
+## 12. Security scan clean
+
+- Rule: `<shared>/secure-coding.md` (S1-S18) and `<shared>/sql-safety.md`. This check is Verification step 1 of `secure-coding.md`.
+- Scope: this run's files. Run `node <shared>/scripts/security-scan.js <file> <file> ...` with the checkpoint's created and modified files, or `node <shared>/scripts/security-scan.js --changed` when the project is a git repository and had no other uncommitted changes.
+- Pass: exit 0 (no critical or high finding) and every medium finding read and either fixed or listed with a reason. A finding marked in code with `security-scan: ignore <rule-id> <reason>` must also appear in the summary with its reason.
+- Not a pass: exit 1, a suppression added only to silence the scanner, or a finding "fixed" by renaming a variable or splitting a line so the pattern no longer matches.
+- If Node is unavailable: run the scanner's main patterns by hand (string-built SQL, `exec`/`shell=True`, `eval`/`new Function`, `pickle`/`yaml.load`/`unserialize`, `rejectUnauthorized: false`/`verify=False`, `Math.random` for tokens, `req.body` into `create`/`update`, `fetch(req.`, a path from `req.`) and record "scanner not run" in the verdict (incomplete, not clean).
+- If failed: fix per the cited rule (the scanner prints `secure-coding Sx` or `sql-safety n`).
+
+## 13. Secure-coding review of handlers and integrations
+
+- Rule: `<shared>/secure-coding.md`. The scanner reads one line at a time; this check reads the flow.
+- Scope: changed handlers, services that call out (HTTP clients, shell, filesystem, parsers, crypto, email, templates) and webhook receivers.
+- Pass, for each one: input is schema-validated and unknown fields are rejected (S1); only allowlisted fields reach the model and the response DTO hides internal fields (S2); the route is authenticated and has its role or owner check (S3); no request value reaches a shell, path, outbound URL, parser, template, regex or redirect without the containment its rule requires (S4-S10); tokens use a CSPRNG and secrets are compared in constant time (S11, S12); no secret is in code or logs (S13, S17); request size, page size and outbound timeouts are bounded (S15); a webhook verifies its signature over the raw body (S16).
+- If failed: fix it now. A request value reaching a shell, file path, outbound URL, deserializer, template compiler or `eval` without its S-rule containment can never be justified, only fixed (same as the three SQL findings in the exit criterion).

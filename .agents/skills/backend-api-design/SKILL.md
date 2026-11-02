@@ -28,7 +28,7 @@ Not for:
 2. Read `<shared>/tool-rules.md` (mode=auto contract, checkpoints) and `<shared>/host-tools.md` if the action names below don't match your host's tools. Read `<shared>/principles.md` -> API and Security; apply them to every endpoint. Read `<shared>/memory-schema.md` -> api-patterns.md before writing memory.
 3. Load project memory per `<shared>/context-loading.md`: `project-overview.md`, `tech-stack.md`, `api-patterns.md` (conventions and endpoint inventory), `db-schema.md` (the data the API exposes), and `decisions.md` (prior protocol and versioning decisions). If memory is empty or stale, suggest running `backend-scan` first; if the user declines, continue with what the codebase shows.
 4. If the detected stack matches a file in `<shared>/stacks/`, read it.
-5. Read `<shared>/sql-safety.md` -> The Rules (rules 2-6 and 10 shape the contract). The contract is the first line of defense against injection and BOLA; Step 4a turns those rules into schema constraints.
+5. Read `<shared>/sql-safety.md` -> The Rules (rules 2-6 and 10 shape the contract) and `<shared>/secure-coding.md` -> S1, S2, S3, S9, S14, S15 and S16 (strict schemas with unknown fields rejected, separate input and output schemas, per-operation auth, redirect and URL parameters, CORS, size and page limits, webhook signatures). The contract is the first line of defense against injection and BOLA; Step 4a turns those rules into schema constraints.
 
 ## Workflow
 

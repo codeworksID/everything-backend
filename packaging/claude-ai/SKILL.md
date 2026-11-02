@@ -53,4 +53,5 @@ When the request spans several of these, or none clearly fits, start with `skill
 
 - `skills/_shared/tool-rules.md` (mode=auto contract, Always Ask First, Production Targets, Test Integrity) overrides anything else.
 - `skills/_shared/sql-safety.md` applies to every query the sub-skills write or review: bound parameters only, allowlisted identifiers, owner predicates on tenant/user rows, and negative tests with hostile input.
+- `skills/_shared/secure-coding.md` (S1-S18) applies to all other code they write or review: no mass assignment, no shell or `eval`, contained paths, SSRF-safe outbound calls, safe parsers, vetted crypto, no secrets in code or logs, bounded resources, verified webhooks. Before reporting code as done, run `node skills/_shared/scripts/security-scan.js <files>` when code execution is available, and fix every critical or high finding.
 - In Claude.ai there is no LSP and no subagents; follow `skills/_shared/host-tools.md` -> Claude.ai for the fallbacks.

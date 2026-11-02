@@ -5,7 +5,8 @@
 //
 // Reads the hook JSON from stdin. For Bash and PowerShell it classifies
 // tool_input.command with _shared/scripts/guard.js. For Write, Edit and
-// MultiEdit it checks whether tool_input.file_path is a secret file.
+// MultiEdit it checks whether tool_input.file_path is a secret file, then
+// scans the added text with _shared/scripts/security-scan.js.
 // When something needs a human, it prints a PreToolUse "ask" decision.
 // When it has no objection, it prints nothing (the host's normal permissions apply).
 //
@@ -29,6 +30,34 @@ function isSecretFile(filePath) {
   if (/^id_(rsa|dsa|ecdsa|ed25519)(_sk)?$/.test(base)) return true;
   if (base.startsWith("credentials") && base.endsWith(".json")) return true;
   return false;
+}
+
+// Text the edit would add: Write content, Edit new_string, MultiEdit new_strings.
+function addedText(toolName, toolInput) {
+  if (toolName === "Write") return typeof toolInput.content === "string" ? toolInput.content : "";
+  if (toolName === "Edit") return typeof toolInput.new_string === "string" ? toolInput.new_string : "";
+  if (toolName === "MultiEdit" && Array.isArray(toolInput.edits)) {
+    return toolInput.edits.map((e) => (e && typeof e.new_string === "string" ? e.new_string : "")).join("\n");
+  }
+  return "";
+}
+
+// Runs _shared/scripts/security-scan.js over the added text. Default mode asks on
+// high and critical findings; strict mode also on medium. Snippets are never
+// included, so a secret in the new text is not echoed back.
+function insecureCodeReason(toolName, toolInput, mode) {
+  const filePath = typeof toolInput.file_path === "string" ? toolInput.file_path : "";
+  const text = addedText(toolName, toolInput);
+  if (!filePath || !text.trim()) return null;
+  const scan = require(path.join(__dirname, "..", ".agents", "skills", "_shared", "scripts", "security-scan.js"));
+  const rel = filePath.replace(/\\/g, "/");
+  if (scan.isVendored(rel, text) || scan.ignoreFileReason(text)) return null;
+  const min = scan.SEVERITIES.indexOf(mode === "strict" ? "medium" : "high");
+  const hits = scan.scanText(text, rel).filter((f) => scan.SEVERITIES.indexOf(f.severity) >= min);
+  if (hits.length === 0) return null;
+  const shown = hits.slice(0, 3).map((f) => `[${f.rule}] ${f.severity}, line ${f.line} of the new text: ${f.message} (${f.ref})`);
+  const more = hits.length > 3 ? `; and ${hits.length - 3} more` : "";
+  return `insecure-code: ${shown.join("; ")}${more}. Fix it per _shared/secure-coding.md, or confirm it was reviewed (suppress with "security-scan: ignore <rule-id> <reason>")`;
 }
 
 function ask(reason) {
@@ -56,7 +85,7 @@ function decide(input) {
     if (isSecretFile(toolInput.file_path)) {
       return `editing a secret file (${path.basename(String(toolInput.file_path).replace(/\\/g, "/"))}); keep secrets out of the repo and the transcript`;
     }
-    return null;
+    return insecureCodeReason(toolName, toolInput, mode);
   }
 
   const shell = SHELL_TOOLS[toolName];
@@ -97,4 +126,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { isSecretFile, decide };
+module.exports = { isSecretFile, decide, insecureCodeReason };

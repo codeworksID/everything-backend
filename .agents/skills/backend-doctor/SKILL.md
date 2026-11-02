@@ -37,6 +37,7 @@ Doctor-specific checks:
 - `references/smoke-test.md`: read before Step 6 (start command, port, health route discovery, Bash and PowerShell start/poll/stop).
 - `references/static-checks.md`: read before Step 7 (injection sinks per stack, owner-predicate (BOLA) check, secret search and masking, bandit flags, architecture, performance and resilience checks).
 - `<shared>/sql-safety.md`: read before Step 7. It is the source of truth for what counts as safe data access and for injection and BOLA severity.
+- `<shared>/secure-coding.md`: read before Step 7. It is the source of truth for everything else a static check judges (S1-S18) and for its severity (Verification, step 5).
 - `references/output-format.md`: read in Step 8 (the output template, the grading rubric and recommendation patterns per finding type).
 
 ## Inputs
@@ -113,7 +114,7 @@ Done when: the probe result is recorded and no process this run started is still
 
 ### Step 7: Static checks
 
-Follow `references/static-checks.md`, judging data-access hits against `<shared>/sql-safety.md`. Search for candidates, read each hit in context, and report only confirmed findings. Cover injection sinks (SQL, NoSQL operator, command, template), reads and writes of owned rows without an owner predicate (candidate BOLA, hand to backend-security), secrets in the working tree, missing validation and obvious ownership gaps, layering and architecture, performance (static only) and resilience. Anything that needs a deeper security look goes to "Needs review (backend-security)".
+Start with `node <shared>/scripts/security-scan.js --json` over the source roots (`mode=review`: `--changed --base <base>`); it is read-only and needs no install. Then follow `references/static-checks.md`, judging data-access hits against `<shared>/sql-safety.md` and all other hits against `<shared>/secure-coding.md`. Search for candidates, read each hit in context, and report only confirmed findings. Cover injection sinks (SQL, NoSQL operator, command, template), reads and writes of owned rows without an owner predicate (candidate BOLA, hand to backend-security), secrets in the working tree, missing validation and obvious ownership gaps, layering and architecture, performance (static only) and resilience. Anything that needs a deeper security look goes to "Needs review (backend-security)".
 
 Done when: every confirmed finding has a file, line and evidence excerpt.
 

@@ -1,4 +1,4 @@
-# Security Negative Tests (Injection and Cross-Tenant Access)
+# Security Negative Tests (Injection, Cross-Tenant Access and Beyond)
 
 Read this when the feature takes user-controlled query parameters (search, filter, sort, id, free text, JSON filter bodies) or reads or writes tenant- or user-owned rows. These tests implement `<shared>/sql-safety.md` -> Verification, step 4. The rules themselves (bound values, allowlisted identifiers, owner predicate, escaped LIKE, NoSQL operator rejection) live in `<shared>/sql-safety.md`; this file only shows how to prove them with tests.
 
@@ -252,6 +252,66 @@ async def test_cross_tenant_access_is_denied_and_changes_nothing(client, tenants
 ```
 
 Adapt names, routes, and the error-text pattern to the project. Keep the asserts: status in the allowed set, no driver text, no foreign rows, unchanged counts.
+
+## Beyond SQL (secure-coding.md)
+
+These tests implement `<shared>/secure-coding.md` -> Verification, step 4. Add the rows that match what the endpoint does; an endpoint that accepts a URL, a file, a redirect target or a webhook and has no test for it is a gap.
+
+| Rule | Send | Pass when |
+|---|---|---|
+| S2 mass assignment | body with `role: "admin"`, `isAdmin: true`, `tenantId: <B>`, `ownerId: <B>`, `emailVerified: true`, `balance: 1e9` | 200/201 with those fields unchanged in the database, or 400; the response never contains `passwordHash`, tokens or internal flags |
+| S3 function access | a normal user's token on admin, export, impersonation and bulk routes; no token on every non-public route | 403 (or 404) and 401 |
+| S15 limits | a body over the route's limit, an array of 100,000 items, JSON nested 1,000 levels, `?limit=1000000` | 413 or 400, or the page size capped at the maximum; never a 500 or a timeout |
+| S5 paths and uploads | `../../etc/passwd`, `..%2f..%2fetc%2fpasswd`, `/etc/passwd`, `C:\Windows\win.ini`, `a%00.png`; a `.png` that is really HTML or SVG with a script; an oversized file; a zip with a `../` entry | 400 or 404; no file read or written outside the base folder; the upload rejected or served as an attachment |
+| S6 SSRF | `http://169.254.169.254/latest/meta-data/`, `http://127.0.0.1:22`, `http://[::1]/`, `http://[::ffff:127.0.0.1]/`, `http://2130706433/`, `http://0.0.0.0/`, `file:///etc/passwd`, `gopher://x`, and a public URL that redirects to `127.0.0.1` | 400 before any connection is made (assert the HTTP client stub was never called with that address) |
+| S4, S8 command and template | `; id`, `$(id)`, `` `id` ``, `\| whoami`, `--help`, `-oProxyCommand=x`, `{{7*7}}`, `${7*7}`, `<%= 7*7 %>`, `#{7*7}` | 400, or the value stored and echoed literally; never `49` and never command output |
+| S9 output and redirects | `<script>alert(1)</script>`, `"><img src=x onerror=alert(1)>` in rendered fields; `next=//evil.example`, `next=https://evil.example`, `next=/\evil.example`; a value with `\r\nSet-Cookie: x=1` that ends up in a header; `=HYPERLINK("http://x")` in a CSV export | the markup escaped in the output; the redirect refused or sent to a default path; no injected header; the CSV cell prefixed with `'` |
+| S10 regex and prototype | `(a+)+$` with `"a".repeat(30) + "!"` where a pattern is accepted; `{"__proto__": {"isAdmin": true}}` and `{"constructor": {"prototype": {"isAdmin": true}}}` | a fast 400; after the request `({}).isAdmin` is still undefined |
+| S11 tokens | `alg: none`; an HS256 token signed with the RS256 public key; expired; wrong `aud`/`iss`; a `kid`/`jku` pointing elsewhere; a reused password-reset token | 401 (or 400 for the reset); the reset works only once |
+| S11, S15 brute force | 20 failed logins for one account, and from one IP | 429 or a lockout response; the response does not reveal whether the account exists |
+| S16 webhooks | no signature; a wrong signature; a valid signature over a re-serialized body; a timestamp 10 minutes old; the same event id twice | 401 for the first four; the duplicate processed once |
+| S17 errors | any input that makes the handler throw | a generic error body with a correlation id; no stack trace, SQL, file path or framework banner |
+
+```typescript
+// test/users.security-beyond-sql.test.ts (Vitest + Supertest; adapt routes and factories)
+it('ignores privileged fields in the body (S2)', async () => {
+  const res = await request(app).patch('/v1/me').set(authHeader(userA))
+    .send({ name: 'x', role: 'admin', tenantId: tenantB.id });
+  expect([200, 400]).toContain(res.status);
+  const row = await db.user.findUniqueOrThrow({ where: { id: userA.id } });
+  expect(row.role).toBe(userA.role);
+  expect(row.tenantId).toBe(userA.tenantId);
+  expect(JSON.stringify(res.body)).not.toMatch(/passwordHash|password_hash/);
+});
+
+it.each(['http://169.254.169.254/latest/meta-data/', 'http://127.0.0.1:22', 'http://[::ffff:127.0.0.1]/', 'file:///etc/passwd'])(
+  'rejects internal webhook target %s (S6)', async (url) => {
+    const res = await request(app).post('/v1/webhooks').set(authHeader(userA)).send({ url });
+    expect(res.status).toBe(400);
+    expect(httpClientStub).not.toHaveBeenCalled();
+  });
+
+it('rejects a prototype-pollution body (S10)', async () => {
+  await request(app).post('/v1/settings').set(authHeader(userA))
+    .set('content-type', 'application/json').send('{"__proto__":{"isAdmin":true}}');
+  expect(({} as Record<string, unknown>).isAdmin).toBeUndefined();
+});
+```
+
+```python
+# tests/test_security_beyond_sql.py (pytest + httpx; adapt routes and fixtures)
+@pytest.mark.parametrize("name", ["../../etc/passwd", "..%2f..%2fetc%2fpasswd", "/etc/passwd", "a\x00.png"])
+async def test_download_rejects_traversal(client, user_a_headers, name):  # S5
+    res = await client.get(f"/v1/files/{name}", headers=user_a_headers)
+    assert res.status_code in (400, 404)
+    assert "root:" not in res.text
+
+async def test_webhook_rejects_stale_signature(client, sign):  # S16
+    body = b'{"id":"evt_1","type":"paid"}'
+    res = await client.post("/v1/webhooks/stripe", content=body,
+                            headers=sign(body, timestamp=time.time() - 600))
+    assert res.status_code == 401
+```
 
 ## Other Stacks
 

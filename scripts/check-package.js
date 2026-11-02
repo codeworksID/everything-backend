@@ -438,6 +438,28 @@ function checkClaudeBundle() {
   }
 }
 
+// The pack's own scripts must pass its own scanner (no medium or worse finding).
+function checkSelfScan() {
+  const scan = require(path.join(skillsRoot, sharedDirName, "scripts", "security-scan.js"));
+  const files = [];
+  const walk = (dir) => {
+    if (!fs.existsSync(dir)) return;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (scan.langOf(full)) files.push(full);
+    }
+  };
+  for (const dir of [path.join(repoRoot, "scripts"), path.join(repoRoot, "hooks"), path.join(repoRoot, "packaging"), path.join(skillsRoot, sharedDirName, "scripts")]) walk(dir);
+  const skipped = [];
+  for (const f of scan.scanFiles(files, { skipped })) {
+    if (scan.SEVERITIES.indexOf(f.severity) >= scan.SEVERITIES.indexOf("medium")) {
+      errors.push(`security-scan: ${rel(f.file)}:${f.line} [${f.rule}] ${f.message}`);
+    }
+  }
+  for (const s of skipped) warnings.push(`security-scan skipped ${rel(s.file)} (ignore-file: ${s.reason})`);
+}
+
 function main() {
   const pkg = checkPackageJson();
   const skillNames = listSkillDirectories();
@@ -449,6 +471,7 @@ function main() {
   checkClaudePlugin(pkg);
   checkHooks();
   checkClaudeBundle();
+  checkSelfScan();
 
   for (const warning of warnings) {
     console.warn(`check-package: warning: ${warning}`);

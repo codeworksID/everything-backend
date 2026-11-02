@@ -36,6 +36,7 @@ If a request mixes a feature with a refactor, do the refactor first through `bac
    - No design for the feature (no endpoint in `api-patterns.md`, no tables in `db-schema.md`, nothing from the user): run `backend-api-design` and/or `backend-db-design` first, or proceed only on a design the user gives in the request.
 4. If the detected stack matches a file in `<shared>/stacks/`, read it.
 5. Read `<shared>/sql-safety.md` before writing any query or repository code. Its rules are not optional: bound values, allowlisted identifiers, and an owner predicate from the authenticated principal on every tenant- or user-owned row.
+6. Read `<shared>/secure-coding.md` -> The Rules before writing handlers, services or integrations. S1-S18 are not optional either: schema validation, no mass assignment, deny-by-default access, no shell or eval, contained paths, SSRF-safe outbound calls, safe parsers, vetted crypto, no secrets in code or logs, bounded resources.
 
 ## Workflow
 
@@ -69,6 +70,7 @@ node <shared>/scripts/checkpoint.js start --skill backend-implement --feature <s
 1. Generate or edit code layer by layer: repository, then service, then handler, then wiring. Use the shapes in [references/patterns.md](references/patterns.md).
 2. Apply `<shared>/principles.md`: thin transport, services own workflow and transactions, typed errors mapped centrally, validation at the boundary, no secrets in responses or logs.
    - Every query follows `<shared>/sql-safety.md`. Sort and filter fields map through a server-side allowlist, and reads and writes of owned rows bind `tenant_id` or `user_id` from the authenticated principal, never from the request.
+   - Every handler, service and integration follows `<shared>/secure-coding.md`: input and output DTOs (never the request body onto a model), shell-free process calls, contained file paths, outbound URLs checked against SSRF, safe parsers, CSPRNG tokens, constant-time secret compares, bounded sizes and timeouts.
 3. Models and ORM entities may change here. The schema change itself goes to `backend-migrate` with the full column, index and constraint spec. Never turn on ORM auto-sync against anything but a disposable local database this run started.
 4. Auth code implements the decision `backend-auth` recorded. If none exists, stop that part and route to `backend-auth`.
 5. New dependencies pass the license gate below, and installing them always asks first.
@@ -78,7 +80,7 @@ Output: the changed files, recorded in the checkpoint.
 
 ### Step 4: Run the post-generation checklist
 
-Read [references/post-generation-checklist.md](references/post-generation-checklist.md) and run all eleven checks against this run's files only: layering, transactions, SQL building and unsafe raw APIs, input validation, framework leaks, error mapping, suppressions, diagnostics, test coverage, owner predicates, hostile-input tests.
+Read [references/post-generation-checklist.md](references/post-generation-checklist.md) and run all thirteen checks against this run's files only: layering, transactions, SQL building and unsafe raw APIs, input validation, framework leaks, error mapping, suppressions, diagnostics, test coverage, owner predicates, hostile-input tests, the security scan (`<shared>/scripts/security-scan.js`), and the secure-coding review.
 
 - Fix each finding, or list it with `file:line` and a one-line justification. A string-built query, an unsafe raw API with input, or a missing owner predicate is never justified: fix it.
 - Run the tests you added and the existing suite, but only when every target is provably local (see `<shared>/tool-rules.md` -> Production Targets). Follow Test Integrity: never skip, delete or loosen a failing test to get green. If a failure is a bug outside this feature, hand it to `backend-debug`.

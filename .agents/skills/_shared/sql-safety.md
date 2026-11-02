@@ -4,7 +4,7 @@
 
 Any query that can be reached from a public endpoint must be safe against **hostile input**. Treat every value as untrusted when it comes from: path params, query strings, request bodies, GraphQL variables, headers (including `Host`, `X-Forwarded-For`, `User-Agent`, `Referer`), cookies, token claims, uploaded file names and contents (CSV, XML), message queues, webhooks, third-party APIs, or **the database itself** (second-order injection, below).
 
-**Out of scope here:** mass assignment (binding request fields onto a model), XSS and command injection. They are covered by backend-security; this file is only about how queries are built and scoped.
+**Out of scope here:** mass assignment (binding request fields onto a model), XSS, command injection, SSRF, deserialization and the rest of secure coding. They are covered by `secure-coding.md` (S1-S18), which applies alongside this file; this file is only about how queries are built and scoped. `scripts/security-scan.js` checks both.
 
 ## The Rules
 
@@ -53,7 +53,7 @@ The stack files in `stacks/` show full examples for Postgres, Node/TypeScript an
 
 ## Verification (required before a change is reported as done)
 
-1. **Static search.** Run the "No SQL built from strings" check (backend-implement -> post-generation checklist, check 3) and the injection-sink table (backend-doctor -> static checks) over every changed file. Also search for the unsafe APIs in the table above. Read every hit in context; a hit is fixed or justified with `file:line`.
+1. **Static search.** Run `node <shared>/scripts/security-scan.js --changed` (rules `sql-*`, `mybatis-*`, `nosql-*`), then the "No SQL built from strings" check (backend-implement -> post-generation checklist, check 3) and the injection-sink table (backend-doctor -> static checks) over every changed file. Also search for the unsafe APIs in the table above. Read every hit in context; a hit is fixed or justified with `file:line`.
 2. **Read every changed repository/DAO file.** Multi-line query building, helper functions that return SQL fragments and values read back from the database (second-order) escape line-based patterns.
 3. **SAST when available.** `semgrep scan --config p/sql-injection --config p/<language> --metrics=off` (installing semgrep is Always Ask First). Bandit `B608` (string-built SQL), `B610` (Django `extra`) and `B611` (Django `RawSQL`) for Python; gosec `G201` (SQL format string) and `G202` (SQL string concatenation) for Go; Brakeman (SQL Injection warnings) for Rails; SpotBugs + Find Security Bugs (`SQL_INJECTION_*`) for Java; CodeQL `*/sql-injection` queries where CodeQL runs. A clean scan does not replace steps 1, 2 and 4.
 4. **Negative tests.** For each endpoint that takes a search, filter, sort, id or free-text parameter, add tests (backend-test -> security tests) that send hostile input and assert the response is a 400 or an empty/own-tenant result, never extra rows, a 500, a changed row count, or a slower response:

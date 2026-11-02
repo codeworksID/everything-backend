@@ -1,6 +1,6 @@
 {
   "name": "everything-backend",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Backend engineering Agent Skills for Claude Code, Claude.ai, OpenCode, Cursor and Antigravity, with an installable CLI and a Claude Code plugin.",
   "license": "MIT",
   "repository": {

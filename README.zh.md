@@ -30,7 +30,7 @@
 
 共享内容位于 `.agents/skills/_shared/`：
 
-- 每个技能都遵循的规则（`tool-rules.md`、`context-loading.md`、`memory-schema.md`、`principles.md`），其中包括 `sql-safety.md`，即防注入的数据访问规则（只使用绑定参数、标识符走白名单、每个租户或用户所属的行都带上所有者条件，并且在用恶意输入测试通过之前，改动不算完成）
+- 每个技能都遵循的规则（`tool-rules.md`、`context-loading.md`、`memory-schema.md`、`principles.md`），其中包括 `sql-safety.md`，即防注入的数据访问规则（只使用绑定参数、标识符走白名单、每个租户或用户所属的行都带上所有者条件，并且在用恶意输入测试通过之前，改动不算完成），以及 `secure-coding.md`，即其余所有方面的规则（S1-S18：禁止批量赋值、禁止 shell 和 `eval`、限定文件路径、防 SSRF 的外部请求、安全的解析器、经过验证的加密、代码和日志中不出现密钥、资源有上限、验证过签名的 webhook、固定版本的供应链），由内置的 `scripts/security-scan.js` 检查
 - 各宿主环境的工具名称映射（`host-tools.md`）
 - 技术栈参考（`stacks/postgres.md`、`stacks/node-typescript.md`、`stacks/python-fastapi.md`）
 - 强制执行脚本（`scripts/checkpoint.js`、`scripts/guard.js`）
@@ -75,6 +75,7 @@
 - 部署与基础设施命令（`kubectl apply`、`helm upgrade`、`terraform apply`、`docker push`）
 - 递归删除
 - 编辑密钥文件（`.env`、密钥）
+- 写入不安全的代码：每次 `Write` 或 `Edit` 都会用 `security-scan.js` 扫描，严重或高危的发现（拼接字符串构造的 SQL、调用 shell、`eval`、不安全的反序列化、关闭 TLS 校验、代码中的密钥、批量赋值、SSRF、路径穿越）需要你确认
 
 控制该 hook：
 

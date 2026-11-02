@@ -30,7 +30,7 @@ AI コーディングエージェント向けのバックエンドエンジニ�
 
 共有の資料は `.agents/skills/_shared/` にあります。
 
-- すべてのスキルが従うルール（`tool-rules.md`、`context-loading.md`、`memory-schema.md`、`principles.md`）。インジェクションに強いデータアクセスのルールを定めた `sql-safety.md` も含みます（値は必ずバインドパラメータで渡す、識別子は許可リストで制限する、テナントやユーザーが所有するすべての行に所有者の条件を付ける、悪意のある入力でのテストを通過するまで変更は完了とみなさない）
+- すべてのスキルが従うルール（`tool-rules.md`、`context-loading.md`、`memory-schema.md`、`principles.md`）。インジェクションに強いデータアクセスのルールを定めた `sql-safety.md` も含みます（値は必ずバインドパラメータで渡す、識別子は許可リストで制限する、テナントやユーザーが所有するすべての行に所有者の条件を付ける、悪意のある入力でのテストを通過するまで変更は完了とみなさない）。それ以外のすべてを定めた `secure-coding.md`（S1〜S18：マスアサインメントの禁止、シェルや `eval` の禁止、ファイルパスの封じ込め、SSRF に強い外部呼び出し、安全なパーサー、実績のある暗号、コードやログに秘密情報を置かない、リソースの上限、署名検証済みの Webhook、固定されたサプライチェーン）も含み、同梱の `scripts/security-scan.js` で検査されます
 - ホストごとのツール名の対応表（`host-tools.md`）
 - スタック別リファレンス（`stacks/postgres.md`、`stacks/node-typescript.md`、`stacks/python-fastapi.md`）
 - 強制用スクリプト（`scripts/checkpoint.js`、`scripts/guard.js`）
@@ -75,6 +75,7 @@ Claude Code 内で次を実行します。
 - デプロイおよびインフラ系コマンド（`kubectl apply`、`helm upgrade`、`terraform apply`、`docker push`）
 - 再帰的な削除
 - シークレットファイル（`.env`、鍵）の編集
+- 安全でないコードの書き込み：すべての `Write` と `Edit` は `security-scan.js` でスキャンされ、重大または高の検出（文字列で組み立てた SQL、シェル呼び出し、`eval`、安全でないデシリアライザー、無効化された TLS、コード内の秘密情報、マスアサインメント、SSRF、パストラバーサル）には確認が必要です
 
 フックの制御方法：
 

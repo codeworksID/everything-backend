@@ -5,6 +5,19 @@
 
 ---
 
+## 0.5.0 (2026-11-02)
+
+### Added
+
+- **Secure coding baseline** (`_shared/secure-coding.md`): rules S1-S18 for all code outside the query layer, mandatory for every skill that writes, reviews, tests or fixes code. Covers validation, mass assignment, deny-by-default access and race conditions, command injection, paths and uploads, SSRF, deserialization and XXE, eval and SSTI, output encoding and redirects, ReDoS and prototype pollution, credentials and JWT, crypto and randomness, secrets, cookies/CORS/CSRF/headers, resource limits, webhooks, errors and logging, and the supply chain; with a safe/unsafe API table per stack and required verification.
+- **Security scanner** (`_shared/scripts/security-scan.js`): zero-dependency, line-based scanner for the patterns banned by `secure-coding.md` and `sql-safety.md` (52 rules), with `--changed`, JSON output, severity gating, reasoned inline suppressions, vendored/generated-file skipping and redacted secret output.
+- **Hook**: the Claude Code `PreToolUse` hook scans the text of every `Write`/`Edit`/`MultiEdit` and asks (`insecure-code`) on critical or high findings (medium too with `EVERYTHING_BACKEND_GUARD=strict`).
+- **Tests beyond SQL** in `backend-test/references/security-tests.md`: mass assignment, function access, limits, traversal and uploads, SSRF, command/template payloads, XSS/redirect/header/CSV, ReDoS and prototype pollution, JWT and brute force, webhooks, error leaks.
+
+### Changed
+
+- backend-implement checklist has checks 12 (security scan) and 13 (secure-coding review); refactor, debug, doctor, security, auth, api-design, test, ops and deploy read `secure-coding.md` and run the scanner where they change or review code.
+
 ## 0.4.0 (2026-11-02)
 
 IDs refer to docs/audit/2026-10-31-findings-detail.md.

@@ -26,7 +26,7 @@ Not for:
 2. Read `<shared>/tool-rules.md` (mode=auto contract, Production Targets, Test Integrity, checkpoints) and `<shared>/host-tools.md` if the action names below don't match your host's tools. Read `<shared>/principles.md` (applied to every fix) and `<shared>/memory-schema.md` -> issues.md and decisions.md before writing memory.
 3. Load project memory per `<shared>/context-loading.md`: `project-overview.md`, `tech-stack.md`, `issues.md` (the bug may be known), and `test-strategy.md` (test conventions). Load `api-patterns.md` for endpoint bugs and `db-schema.md` for data bugs. If memory is missing, do not stop: find the manifest and test runner yourself and suggest `backend-scan` in the report.
 4. If the detected stack matches a file in `<shared>/stacks/`, read it.
-5. If the bug or its fix touches a query (SQL, ORM, NoSQL, search), read `<shared>/sql-safety.md` fully. It is the rule set for every query this skill changes.
+5. If the bug or its fix touches a query (SQL, ORM, NoSQL, search), read `<shared>/sql-safety.md` fully. It is the rule set for every query this skill changes. For every other change, `<shared>/secure-coding.md` -> The Rules applies: a fix never adds a shell call, `eval`, an unsafe parser, an unchecked path or URL, a disabled TLS check or a logged secret, and never removes a validation, auth or size check to make a symptom go away.
 
 ## References
 
@@ -137,6 +137,7 @@ Output: the diff of the fix. Done when only files tied to the bug and its test c
 4. Re-run the Step 2 reproduction: the symptom must be gone.
 5. Remove every temporary log and debug statement: search for the marker and confirm zero hits.
 6. If any query changed, run `_shared/sql-safety.md` -> Verification on the changed files (static search, read each changed DAO file, SAST if available, hostile-payload negative tests). A failed check means the fix is not done.
+7. Run `node <shared>/scripts/security-scan.js --changed`. A new critical or high finding in the fix means the fix is not done; for a security bug, also add the matching hostile-input test from `<shared>/secure-coding.md` -> Verification, step 4.
 7. If the fix fails twice for the same reason, stop and report instead of looping.
 
 Output: test and check results, each marked passed, failed or did not complete. Done when the failing test passes, the suite has no new failures, and no debug code remains.
@@ -191,4 +192,5 @@ To undo this run's changes, use `node <shared>/scripts/checkpoint.js rollback --
 - The root cause is written down with evidence, in the report and in `issues.md`.
 - No temporary logging remains and no unrelated changes are in the diff.
 - Any changed query passes `<shared>/sql-safety.md` -> Verification.
+- `security-scan.js --changed` reports no new critical or high finding.
 - The checkpoint is closed.

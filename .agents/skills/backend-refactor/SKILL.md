@@ -40,7 +40,7 @@ Refactors never share a change set with a fix or a feature. If the request mixes
 2. Read `<shared>/tool-rules.md` (mode=auto contract, Production Targets, Test Integrity, checkpoints) and `<shared>/host-tools.md` if the actions below don't match your host's tool names. Read `<shared>/principles.md` for the target structure, and `<shared>/memory-schema.md` before updating memory.
 3. Load project memory per `<shared>/context-loading.md`: always `project-overview.md` and `tech-stack.md`; `api-patterns.md` for controllers and routes; `db-schema.md` for data access; `decisions.md` when the refactor applies an architectural pattern; `test-strategy.md` for runner conventions. If `project-overview.md` or `tech-stack.md` is missing, run `backend-scan` with `mode=auto` first, or note the gap and discover the layout by finding files and searching file contents.
 4. If the detected stack matches a file in `<shared>/stacks/`, read it.
-5. If the scope touches data-access code (repositories, DAOs, query builders, raw SQL, ORM calls, NoSQL filters), read `<shared>/sql-safety.md` in full.
+5. If the scope touches data-access code (repositories, DAOs, query builders, raw SQL, ORM calls, NoSQL filters), read `<shared>/sql-safety.md` in full. If it touches handlers, validation, auth checks, process calls, file paths, outbound HTTP, parsers, crypto or logging, read `<shared>/secure-coding.md` -> The Rules: a refactor must not remove or weaken any control it lists (validation schema, DTO allowlist, role or owner check, path containment, SSRF check, signature check, size limit).
 
 ## References
 
@@ -160,6 +160,7 @@ Done when: the step's planned callers route through the new code and the default
 5. For API-facing code, run contract or integration tests, or call a representative endpoint on a provably local instance.
 6. Check each implicit-contract item from Step 2.
 7. If data-access code changed, run `<shared>/sql-safety.md` -> Verification steps 1-2 on the changed files: the static search over every changed file, and a full read of every changed repository/DAO file. Compare each moved query with its original: same placeholders, same allowlist, same owner predicate. A query this run made string-built or less scoped is a regression (Step 9); one that was already unsafe goes to `backend-debug` per the Unsafe queries rule in Step 5.
+8. Run `node <shared>/scripts/security-scan.js --changed` (or with the changed files). Compare with the same scan on the baseline: a finding the refactor introduced is a regression (Step 9); one that already existed is reported, not silently fixed.
 
 Done when: all checks pass, or a failing check sends you to Step 9. A check that did not run is reported as "not run", never as passed.
 

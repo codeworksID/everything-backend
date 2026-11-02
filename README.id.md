@@ -30,7 +30,7 @@ Skill rekayasa backend untuk agen AI coding: penemuan proyek, arsitektur, desain
 
 Materi bersama berada di `.agents/skills/_shared/`:
 
-- aturan yang diikuti setiap skill (`tool-rules.md`, `context-loading.md`, `memory-schema.md`, `principles.md`), termasuk `sql-safety.md`, aturan akses data yang kebal injeksi (hanya parameter terikat, identifier dari allowlist, predikat pemilik pada setiap baris milik tenant atau pengguna, dan tes dengan input berbahaya sebelum sebuah perubahan dianggap selesai)
+- aturan yang diikuti setiap skill (`tool-rules.md`, `context-loading.md`, `memory-schema.md`, `principles.md`), termasuk `sql-safety.md`, aturan akses data yang kebal injeksi (hanya parameter terikat, identifier dari allowlist, predikat pemilik pada setiap baris milik tenant atau pengguna, dan tes dengan input berbahaya sebelum sebuah perubahan dianggap selesai), serta `secure-coding.md`, aturan untuk semua hal lainnya (S1-S18: tanpa mass assignment, tanpa shell atau `eval`, path file yang dibatasi, panggilan keluar yang aman dari SSRF, parser yang aman, kriptografi yang teruji, tanpa secret di kode maupun log, sumber daya yang dibatasi, webhook yang diverifikasi, supply chain yang di-pin), yang diperiksa oleh `scripts/security-scan.js` bawaan
 - peta nama tool untuk setiap host (`host-tools.md`)
 - referensi stack (`stacks/postgres.md`, `stacks/node-typescript.md`, `stacks/python-fastapi.md`)
 - skrip penegakan aturan (`scripts/checkpoint.js`, `scripts/guard.js`)
@@ -75,6 +75,7 @@ Plugin ini menginstal semua skill beserta guard hook `PreToolUse`. Hook ini memb
 - perintah deploy dan infrastruktur (`kubectl apply`, `helm upgrade`, `terraform apply`, `docker push`)
 - penghapusan rekursif
 - pengeditan file rahasia (`.env`, key)
+- penulisan kode yang tidak aman: setiap `Write` atau `Edit` dipindai dengan `security-scan.js`, dan temuan kritis atau tinggi (SQL yang dirangkai dari string, pemanggilan shell, `eval`, deserializer tidak aman, TLS yang dimatikan, secret di kode, mass assignment, SSRF, path traversal) memerlukan konfirmasi Anda
 
 Untuk mengatur hook:
 

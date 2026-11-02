@@ -30,7 +30,7 @@ Backend engineering skills for AI coding agents: project discovery, architecture
 
 Shared material lives in `.agents/skills/_shared/`:
 
-- the rules every skill follows (`tool-rules.md`, `context-loading.md`, `memory-schema.md`, `principles.md`), including `sql-safety.md`, the injection-proof data access rules (bound parameters only, allowlisted identifiers, owner predicates on every tenant or user row, and hostile-input tests before a change counts as done)
+- the rules every skill follows (`tool-rules.md`, `context-loading.md`, `memory-schema.md`, `principles.md`), including `sql-safety.md`, the injection-proof data access rules (bound parameters only, allowlisted identifiers, owner predicates on every tenant or user row, and hostile-input tests before a change counts as done), and `secure-coding.md`, the rules for everything else (S1-S18: no mass assignment, no shell or `eval`, contained file paths, SSRF-safe outbound calls, safe parsers, vetted crypto, no secrets in code or logs, bounded resources, verified webhooks, pinned supply chain), checked by the bundled `scripts/security-scan.js`
 - a tool-name map for each host (`host-tools.md`)
 - stack references (`stacks/postgres.md`, `stacks/node-typescript.md`, `stacks/python-fastapi.md`)
 - the enforcement scripts (`scripts/checkpoint.js`, `scripts/guard.js`)
@@ -75,6 +75,7 @@ The plugin installs all skills plus a `PreToolUse` guard hook. The hook makes Cl
 - deploy and infra commands (`kubectl apply`, `helm upgrade`, `terraform apply`, `docker push`)
 - recursive deletes
 - edits to secret files (`.env`, keys)
+- writing insecure code: every `Write` or `Edit` is scanned with `security-scan.js`, and critical or high findings (string-built SQL, shell calls, `eval`, unsafe deserializers, disabled TLS, hardcoded secrets, mass assignment, SSRF, path traversal) need your confirmation
 
 To control the hook:
 

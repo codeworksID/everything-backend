@@ -81,7 +81,7 @@ Work through every item in `references/owasp-api-top10.md`: run its searches, re
 | API9 | Improper Inventory Management |
 | API10 | Unsafe Consumption of APIs |
 
-Also run the "Beyond the Top 10" checks in the same reference (injection, unsafe deserialization, path traversal, uploads, crypto misuse, webhook signatures, open redirects). Injection follows `<shared>/sql-safety.md` in full via the reference's "Injection Review" (rules 1-12, second-order, Verification); string-built SQL or a missing owner predicate on a public or low-privilege route is Critical.
+Also run the "Beyond the Top 10" checks in the same reference (injection, unsafe deserialization, path traversal, uploads, crypto misuse, webhook signatures, open redirects). Judge every non-SQL item against `<shared>/secure-coding.md` (cite the S-rule in each finding). Injection follows `<shared>/sql-safety.md` in full via the reference's "Injection Review" (rules 1-12, second-order, Verification); string-built SQL or a missing owner predicate on a public or low-privilege route is Critical.
 
 Rules:
 - A search hit is a lead, not a finding. Read the handler and its middleware before calling it a finding.
@@ -117,7 +117,7 @@ Output: dependency findings table, SBOM path (or "not generated"), pinning and C
 
 ### Step 6: SAST
 
-Run `semgrep` if installed, with metrics off and the project's own config if it has one (commands and exclusions in `references/config-and-privacy.md` -> Static Analysis (SAST) Notes). Use stack tools already present (`bandit` with virtualenv and build folders excluded, `gosec`, `eslint` security plugins, `spotbugs`). Discard hits outside the project's source roots. Triage each remaining hit by reading the code: true positive -> finding, false positive -> note it once.
+First run the bundled scanner, which needs no install: `node <shared>/scripts/security-scan.js --json` over the scope (`--changed --base <base>` for a diff). Each rule cites `<shared>/secure-coding.md` (S1-S18) or `<shared>/sql-safety.md`; triage its hits like any SAST hit. Then run `semgrep` if installed, with metrics off and the project's own config if it has one (commands and exclusions in `references/config-and-privacy.md` -> Static Analysis (SAST) Notes). Use stack tools already present (`bandit` with virtualenv and build folders excluded, `gosec`, `eslint` security plugins, `spotbugs`). Discard hits outside the project's source roots. Triage each remaining hit by reading the code: true positive -> finding, false positive -> note it once.
 
 Output: triaged SAST findings, and the tools that ran or did not run.
 
